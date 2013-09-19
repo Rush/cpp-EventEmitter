@@ -1,11 +1,14 @@
 #include "EventEmitter.hpp"
 
 #include <cstdio>
+#include <string>
 
-EventProvider(Test, (void))
+EventProvider(Test, (int, int, std::string))
+
+//EventProvider(Test, (int, int))
 // class TestEventProvider {
 // public: 
-// 	typedef std::function<void (void)> Handler; 
+// 	typedef std::function<void (int, int)> Handler; 
 // 	typedef std::shared_ptr<Handler> HandlerPtr; 
 // 	private:
 // 	struct EventHandlersSet : public std::set<HandlerPtr, std::less<HandlerPtr>, std::allocator<HandlerPtr>> {
@@ -22,7 +25,7 @@ EventProvider(Test, (void))
 // 	HandlerPtr onceTest(Handler handler) {  
 // 	  if(!eventHandlers) 
 // 			eventHandlers = new EventHandlersSet; 
-// 		auto i = eventHandlers->insert(std::make_shared<Handler>(wrapLambdaWithCallback(std::function<void (void)>(handler), [=]() { 
+// 		auto i = eventHandlers->insert(std::make_shared<Handler>(wrapLambdaWithCallback(std::function<void (int, int)>(handler), [=]() { 
 // 			eventHandlers->eraseLast = true;
 // 		}))); 
 // 		return *(i.first); 
@@ -31,7 +34,7 @@ EventProvider(Test, (void))
 // 	  if(!eventHandlers) 
 // 			return; 
 // 	  for(auto i = eventHandlers->begin();i != eventHandlers->end();) { 
-// 			(*(*i))(); 
+// 			(*(*i))(fargs...); 
 // 			if(eventHandlers->eraseLast) {
 // 				i = eventHandlers->erase(i);
 // 				eventHandlers->eraseLast = false;
@@ -76,16 +79,16 @@ int main()
 	printf("sizeof %i\n", sizeof(TestEventProvider));
 	
 	
-	test.onTest([=]() {
-		printf("Dupa1\n");
+	test.onTest([=](int, int, std::string str) {
+		printf("Dupa1 %s\n", str.c_str());
 	});
 
-	test.onceTest([=]() {
-		printf("Dupa2\n");
+	test.onceTest([=](int, int, std::string str) {
+		printf("Dupa2, %s\n", str.c_str());
 	});
 
-	test.triggerTest();
-	test.triggerTest();
+	test.triggerTest(12, 123, "A");
+	test.triggerTest(392, 23, "B");
 	
 		test.removeAllTestHandlers();
 	

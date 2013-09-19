@@ -1,4 +1,5 @@
 #ifndef __EVENTEMITTER_HPP
+#define __EVENTEMITTER_HPP
 
 #include <functional>
 #include <set>
@@ -41,7 +42,7 @@ public: \
 	HandlerPtr __EVENTEMITTER_CONCAT(once, name) (Handler handler) {  \
 	  if(!eventHandlers) \
 			eventHandlers = new EventHandlersSet; \
-		auto i = eventHandlers->insert(std::make_shared<Handler>(wrapLambdaWithCallback(std::function<void (void)>(handler), [=]() { \
+		auto i = eventHandlers->insert(std::make_shared<Handler>(wrapLambdaWithCallback(std::function<void args>(handler), [=]() { \
 			eventHandlers->eraseLast = true; \
 		}))); \
 		return *(i.first); \
@@ -50,7 +51,7 @@ public: \
 	  if(!eventHandlers) \
 			return; \
 	  for(auto i = eventHandlers->begin();i != eventHandlers->end();) { \
-			(*(*i))(); \
+			(*(*i))(fargs...); \
 			if(eventHandlers->eraseLast) { \
 				i = eventHandlers->erase(i); \
 				eventHandlers->eraseLast = false; \
