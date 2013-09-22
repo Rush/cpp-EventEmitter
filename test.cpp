@@ -33,6 +33,12 @@ void runTest(std::function<void()> test, const std::string& str) {
 }
 
 
+typedef ExampleEventProviderTpl<int, int, std::string> ExampleEventProvider;
+typedef ExampleDeferredEventProviderTpl<int, int, std::string> ExampleDeferredEventProvider;
+#ifndef EVENTEMITTER_DISABLE_THREADING
+typedef ExampleThreadedEventProviderTpl<int, int, std::string> ExampleThreadedEventProvider;
+#endif
+
 int main()
 {
 	
@@ -140,7 +146,8 @@ int main()
 		
 	}, "EventDeferredProvider - on, once, trigger, removeAllHandlers");
 	
-	
+
+#ifndef	EVENTEMITTER_DISABLE_THREADING
 	runTest([]{
 		ExampleThreadedEventProvider test;
 		auto future = test.futureOnceExample();
@@ -202,6 +209,8 @@ int main()
 		while(!async) {}
 		assert(id != std::this_thread::get_id(), "async properly run");
 	}, "EventThreadedProvider - asyncOnce and defer");
+	
+#endif
 	
 	return 0;
 }

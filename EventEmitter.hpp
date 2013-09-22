@@ -15,8 +15,8 @@
 #include <deque>
 
 
-#ifndef EVENTEMITTER_DISABLE_THREADING
 #include <mutex>
+#ifndef EVENTEMITTER_DISABLE_THREADING
 #include <condition_variable>
 #include <future>
 #endif
@@ -31,6 +31,7 @@
 namespace EventEmitter {
 	
 	class DeferredBase {
+		// TODO: disable mutex when EVENTEMITTER_DISABLE_THREADING
 	protected: 
 		typedef std::function<void ()> DeferredHandler;
 		std::deque<DeferredHandler>* deferredQueue = nullptr;
@@ -132,6 +133,8 @@ private:
 		return LambdaCallbackWrapper<Args...>(f, beforeCb);
 	};
 
+#ifndef EVENTEMITTER_DISABLE_THREADING
+	
 	// TODO: allow callback for setting if async has completed
 	template<typename... Args>
 	class LambdaAsyncWrapper
@@ -162,6 +165,8 @@ private:
 	LambdaPromiseWrapper<Args...> getLambdaForFuture(std::shared_ptr<std::promise<std::tuple<Args...>>> promise) {
 		return LambdaPromiseWrapper<Args...>(promise);
 	};
+
+#endif // EVENTEMITTER_DISABLE_THREADING
 	
 }
 #endif // __EVENTEMITTER_NONMACRO_DEFS
@@ -172,9 +177,10 @@ private:
 #endif
 
 #define __EVENTEMITTER_PROVIDER(name, EVENTHANDLER_ARGS)  \
-class __EVENTEMITTER_CONCAT(name,EventProvider) { \
+template<typename... Rest> \
+class __EVENTEMITTER_CONCAT(name,EventProviderTpl) { \
 public: \
-	typedef std::function<void EVENTHANDLER_ARGS> Handler; \
+	typedef std::function<void(Rest...)> Handler; \
 	typedef std::shared_ptr<Handler> HandlerPtr; \
 private: \
  	struct EventHandlersSet : public __EVENTEMITTER_CONTAINER { \
@@ -230,7 +236,7 @@ public: \
 		if(eventHandlers) \
 			eventHandlers->clear(); \
 	} \
-	~__EVENTEMITTER_CONCAT(name,EventProvider)() { \
+	~__EVENTEMITTER_CONCAT(name,EventProviderTpl)() { \
 		if(eventHandlers) { \
 			delete eventHandlers; \
 		} \
@@ -238,18 +244,22 @@ public: \
 };  
 
 #define __EVENTEMITTER_PROVIDER_DEFERRED(name, EVENTHANDLER_ARGS)  \
-class __EVENTEMITTER_CONCAT(name,DeferredEventProvider) : public __EVENTEMITTER_CONCAT(name,EventProvider), public virtual EventEmitter::DeferredBase { \
+template<typename... Rest> \
+class __EVENTEMITTER_CONCAT(name,DeferredEventProviderTpl) : public __EVENTEMITTER_CONCAT(name,EventProviderTpl)<Rest...>, public virtual EventEmitter::DeferredBase { \
 public: \
 	template<typename... Args> void __EVENTEMITTER_CONCAT(trigger,name) (Args&&... fargs) { \
 		runDeferred( \
 			std::bind([=](Args... as) { \
-			this->__EVENTEMITTER_CONCAT(name,EventProvider)::__EVENTEMITTER_CONCAT(trigger,name)(as...); \
+			this->__EVENTEMITTER_CONCAT(name,EventProviderTpl)<Rest...>::__EVENTEMITTER_CONCAT(trigger,name)(as...); \
 			}, EventEmitter::forward_as_ref<Args>(fargs)...)); \
 	} \
 };  
 
+#ifndef EVENTEMITTER_DISABLE_THREADING
+
 #define __EVENTEMITTER_PROVIDER_THREADED(name, EVENTHANDLER_ARGS)  \
-class __EVENTEMITTER_CONCAT(name,ThreadedEventProvider) : public __EVENTEMITTER_CONCAT(name,EventProvider), public virtual EventEmitter::DeferredBase {  \
+template<typename... Rest> \
+class __EVENTEMITTER_CONCAT(name,ThreadedEventProviderTpl) : public __EVENTEMITTER_CONCAT(name,EventProviderTpl)<Rest...>, public virtual EventEmitter::DeferredBase {  \
   std::condition_variable condition; \
 	std::mutex m; \
  \
@@ -263,13 +273,15 @@ class __EVENTEMITTER_CONCAT(name,ThreadedEventProvider) : public __EVENTEMITTER_
 	{ \
 		return std::future<std::tuple<T...>>(); \
 	} \
- \
-	static inline void dummy EVENTHANDLER_ARGS {} \
+	typedef typename __EVENTEMITTER_CONCAT(name,EventProviderTpl)<Rest...>::Handler Handler; \
+	typedef typename __EVENTEMITTER_CONCAT(name,EventProviderTpl)<Rest...>::HandlerPtr HandlerPtr; \
+	 \
+	static inline void dummy(Rest...) {} \
 public: \
-	__EVENTEMITTER_CONCAT(name,ThreadedEventProvider)() { \
+	__EVENTEMITTER_CONCAT(name,ThreadedEventProviderTpl)() { \
 	}	 \
 	bool __EVENTEMITTER_CONCAT(wait,name) (std::chrono::milliseconds duration = std::chrono::milliseconds::max()) { \
-		__EVENTEMITTER_CONCAT(wait,name)([=] EVENTHANDLER_ARGS { \
+		__EVENTEMITTER_CONCAT(wait,name)([=](Rest...) { \
 		}, duration); \
  	} \
  	bool __EVENTEMITTER_CONCAT(wait,name) (Handler handler, std::chrono::milliseconds duration = std::chrono::milliseconds::max()) { \
@@ -278,7 +290,7 @@ public: \
 		HandlerPtr ptr = __EVENTEMITTER_CONCAT(once,name)( \
 			EventEmitter::wrapLambdaWithCallback(handler, [=]() { \
 				finished->store(true); \
-				condition.notify_all(); \
+				this->condition.notify_all(); \
 		})); \
 		 \
 		if(duration == std::chrono::milliseconds::max()) { \
@@ -291,7 +303,7 @@ public: \
 		} \
 		bool gotFinished = finished->load(); \
 		if(!gotFinished) { \
-			__EVENTEMITTER_CONCAT(remove,__EVENTEMITTER_CONCAT(name, Handler))(ptr); \
+			__EVENTEMITTER_CONCAT(name,EventProviderTpl)<Rest...>::__EVENTEMITTER_CONCAT(remove,__EVENTEMITTER_CONCAT(name, Handler))(ptr); \
 		} \
 		return gotFinished; \
  	} \
@@ -304,11 +316,11 @@ public: \
 	 \
 	HandlerPtr __EVENTEMITTER_CONCAT(on,name) (Handler handler) { \
 		std::lock_guard<std::mutex> guard(mutex); \
-		return __EVENTEMITTER_CONCAT(name,EventProvider)::__EVENTEMITTER_CONCAT(on,name)(handler); \
+		return __EVENTEMITTER_CONCAT(name,EventProviderTpl)<Rest...>::__EVENTEMITTER_CONCAT(on,name)(handler); \
 	} \
 	HandlerPtr __EVENTEMITTER_CONCAT(once,name) (Handler handler) { \
 		std::lock_guard<std::mutex> guard(mutex); \
-		return __EVENTEMITTER_CONCAT(name,EventProvider)::__EVENTEMITTER_CONCAT(once,name)(handler); \
+		return __EVENTEMITTER_CONCAT(name,EventProviderTpl)<Rest...>::__EVENTEMITTER_CONCAT(once,name)(handler); \
 	} \
 	HandlerPtr __EVENTEMITTER_CONCAT(asyncOn,name) (Handler handler) { \
 		return __EVENTEMITTER_CONCAT(on,name)(EventEmitter::wrapLambdaInAsync(handler)); \
@@ -316,7 +328,7 @@ public: \
 	HandlerPtr __EVENTEMITTER_CONCAT(asyncOnce,name) (Handler handler) { \
 		return __EVENTEMITTER_CONCAT(once,name)(EventEmitter::wrapLambdaInAsync(handler)); \
 	} \
-	auto __EVENTEMITTER_CONCAT(futureOnce,name)() -> decltype(future_for_function_args(dummy)) { \
+	auto __EVENTEMITTER_CONCAT(futureOnce,name)() -> decltype(std::future<std::tuple<Rest...>>()) { \
 		typedef decltype(tuple_for_function_args(dummy)) TupleEventType; \
 		auto promise = std::make_shared<std::promise<TupleEventType>>(); \
 		auto future = promise->get_future(); \
@@ -326,14 +338,14 @@ public: \
 	} \
 	template<typename... Args> void __EVENTEMITTER_CONCAT(trigger,name) (Args&&... fargs) {  \
 		std::lock_guard<std::mutex> guard(mutex); \
-		__EVENTEMITTER_CONCAT(name,EventProvider)::__EVENTEMITTER_CONCAT(trigger,name)(fargs...); \
+		__EVENTEMITTER_CONCAT(name,EventProviderTpl)<Rest...>::__EVENTEMITTER_CONCAT(trigger,name)(fargs...); \
 		condition.notify_all(); \
 	} \
 	template<typename... Args> void __EVENTEMITTER_CONCAT(defer,name) (Args&&... fargs) {  \
 		runDeferred( \
  			std::bind([=](Args... as) { \
  			  \
- 			this->__EVENTEMITTER_CONCAT(name,EventProvider)::__EVENTEMITTER_CONCAT(trigger,name)(as...); \
+ 			this->__EVENTEMITTER_CONCAT(name,EventProviderTpl)<Rest...>::__EVENTEMITTER_CONCAT(trigger,name)(as...); \
  			}, \
 			EventEmitter::forward_as_ref<Args>(fargs)...			 \
 			  \
@@ -341,20 +353,61 @@ public: \
 	} \
 };  
 
+#endif // EVENTEMITTER_DISABLE_THREADING
+
+#include <map>
+
+
+ #define __EVENTEMITTER_DISPATCHER(name, EVENTHANDLER_ARGS)  \
+template<typename T, typename... Rest> \
+class __EVENTEMITTER_CONCAT(name,EventDispatcherTpl) : public __EVENTEMITTER_CONCAT(name,EventProviderTpl)<Rest...> { \
+ 	typedef typename __EVENTEMITTER_CONCAT(name,EventProviderTpl)<Rest...>::HandlerPtr HandlerPtr; \
+	typedef typename __EVENTEMITTER_CONCAT(name,EventProviderTpl)<Rest...>::Handler Handler; \
+	std::multimap<T, HandlerPtr> map; \
+ \
+	__EVENTEMITTER_CONCAT(name,EventDispatcherTpl)() { \
+		__EVENTEMITTER_CONCAT(name,EventProviderTpl)<Rest...>::__EVENTEMITTER_CONCAT(on,name)([=](T first, Rest...) { \
+  \
+  \
+  \
+  \
+		}); \
+	} \
+	 \
+ 	HandlerPtr __EVENTEMITTER_CONCAT(on,name) (T first, Handler handler) { \
+ 		 \
+ 		return __EVENTEMITTER_CONCAT(name,EventProviderTpl)<Rest...>::__EVENTEMITTER_CONCAT(on,name)(handler); \
+ 	} \
+ 	HandlerPtr __EVENTEMITTER_CONCAT(once,name) (T first, Handler handler) { \
+ 		 \
+ 		return __EVENTEMITTER_CONCAT(name,EventProviderTpl)<Rest...>::__EVENTEMITTER_CONCAT(once,name)(handler); \
+ 	} \
+ };  
+
 
 
 
 #define EventProvider(name, args) \
-__EVENTEMITTER_PROVIDER(name, args)
+__EVENTEMITTER_PROVIDER(name, args) \
+typedef __EVENTEMITTER_CONCAT(__EVENTEMITTER_CONCAT(name, EventProvider),Tpl)args __EVENTEMITTER_CONCAT(name, EventProvider);
 
 #define EventProviderDeferred(name, args) \
 __EVENTEMITTER_PROVIDER(name, args) \
-__EVENTEMITTER_PROVIDER_DEFERRED(name, args)
+__EVENTEMITTER_PROVIDER_DEFERRED(name, args) \
+typedef __EVENTEMITTER_CONCAT(__EVENTEMITTER_CONCAT(name, DeferredEventProvider),Tpl)args __EVENTEMITTER_CONCAT(name, DeferredEventProvider);
 
 #define EventProviderThreaded(name, args) \
 __EVENTEMITTER_PROVIDER(name, args) \
-__EVENTEMITTER_PROVIDER_THREADED(name, args)
+__EVENTEMITTER_PROVIDER_THREADED(name, args) \
+typedef __EVENTEMITTER_CONCAT(__EVENTEMITTER_CONCAT(name, ThreadedEventProvider),Tpl)args __EVENTEMITTER_CONCAT(name, ThreadedEventProvider);
 
 
+
+__EVENTEMITTER_PROVIDER(,)
+__EVENTEMITTER_PROVIDER_DEFERRED(,)
+
+#ifndef EVENTEMITTER_DISABLE_THREADING
+__EVENTEMITTER_PROVIDER_THREADED(,)
+#endif
 
 #endif // __EVENTEMITTER_HPP

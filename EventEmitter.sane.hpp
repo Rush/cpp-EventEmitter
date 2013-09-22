@@ -15,8 +15,8 @@
 #include <deque>
 
 
-#ifndef EVENTEMITTER_DISABLE_THREADING
 #include <mutex>
+#ifndef EVENTEMITTER_DISABLE_THREADING
 #include <condition_variable>
 #include <future>
 #endif
@@ -31,6 +31,7 @@
 namespace EventEmitter {
 	
 	class DeferredBase {
+		// TODO: disable mutex when EVENTEMITTER_DISABLE_THREADING
 	protected: 
 		typedef std::function<void ()> DeferredHandler;
 		std::deque<DeferredHandler>* deferredQueue = nullptr;
@@ -132,6 +133,8 @@ private:
 		return LambdaCallbackWrapper<Args...>(f, beforeCb);
 	};
 
+#ifndef EVENTEMITTER_DISABLE_THREADING
+	
 	// TODO: allow callback for setting if async has completed
 	template<typename... Args>
 	class LambdaAsyncWrapper
@@ -162,6 +165,8 @@ private:
 	LambdaPromiseWrapper<Args...> getLambdaForFuture(std::shared_ptr<std::promise<std::tuple<Args...>>> promise) {
 		return LambdaPromiseWrapper<Args...>(promise);
 	};
+
+#endif // EVENTEMITTER_DISABLE_THREADING
 	
 }
 #endif // __EVENTEMITTER_NONMACRO_DEFS
@@ -172,9 +177,10 @@ private:
 #endif
 
 #define __EVENTEMITTER_PROVIDER(name, EVENTHANDLER_ARGS) //^//
-class ExampleEventProvider {
+template<typename... Rest>
+class ExampleEventProviderTpl {
 public:
-	typedef std::function<void EVENTHANDLER_ARGS> Handler;
+	typedef std::function<void(Rest...)> Handler;
 	typedef std::shared_ptr<Handler> HandlerPtr;
 private:
  	struct EventHandlersSet : public __EVENTEMITTER_CONTAINER {
@@ -230,7 +236,7 @@ public:
 		if(eventHandlers)
 			eventHandlers->clear();
 	}
-	~ExampleEventProvider() {
+	~ExampleEventProviderTpl() {
 		if(eventHandlers) {
 			delete eventHandlers;
 		}
@@ -238,18 +244,22 @@ public:
 }; //_//
 
 #define __EVENTEMITTER_PROVIDER_DEFERRED(name, EVENTHANDLER_ARGS) //^//
-class ExampleDeferredEventProvider : public ExampleEventProvider, public virtual EventEmitter::DeferredBase {
+template<typename... Rest>
+class ExampleDeferredEventProviderTpl : public ExampleEventProviderTpl<Rest...>, public virtual EventEmitter::DeferredBase {
 public:
 	template<typename... Args> void triggerExample (Args&&... fargs) {
 		runDeferred(
 			std::bind([=](Args... as) {
-			this->ExampleEventProvider::triggerExample(as...);
+			this->ExampleEventProviderTpl<Rest...>::triggerExample(as...);
 			}, EventEmitter::forward_as_ref<Args>(fargs)...));
 	}
 }; //_//
 
+#ifndef EVENTEMITTER_DISABLE_THREADING
+
 #define __EVENTEMITTER_PROVIDER_THREADED(name, EVENTHANDLER_ARGS) //^//
-class ExampleThreadedEventProvider : public ExampleEventProvider, public virtual EventEmitter::DeferredBase { 
+template<typename... Rest>
+class ExampleThreadedEventProviderTpl : public ExampleEventProviderTpl<Rest...>, public virtual EventEmitter::DeferredBase { 
   std::condition_variable condition;
 	std::mutex m;
 
@@ -263,13 +273,15 @@ class ExampleThreadedEventProvider : public ExampleEventProvider, public virtual
 	{
 		return std::future<std::tuple<T...>>();
 	}
-
-	static inline void dummy EVENTHANDLER_ARGS {}
+	typedef typename ExampleEventProviderTpl<Rest...>::Handler Handler;
+	typedef typename ExampleEventProviderTpl<Rest...>::HandlerPtr HandlerPtr;
+	
+	static inline void dummy(Rest...) {}
 public:
-	ExampleThreadedEventProvider() {
+	ExampleThreadedEventProviderTpl() {
 	}	
 	bool waitExample (std::chrono::milliseconds duration = std::chrono::milliseconds::max()) {
-		waitExample([=] EVENTHANDLER_ARGS {
+		waitExample([=](Rest...) {
 		}, duration);
  	}
  	bool waitExample (Handler handler, std::chrono::milliseconds duration = std::chrono::milliseconds::max()) {
@@ -278,7 +290,7 @@ public:
 		HandlerPtr ptr = onceExample(
 			EventEmitter::wrapLambdaWithCallback(handler, [=]() {
 				finished->store(true);
-				condition.notify_all();
+				this->condition.notify_all();
 		}));
 		
 		if(duration == std::chrono::milliseconds::max()) {
@@ -291,7 +303,7 @@ public:
 		}
 		bool gotFinished = finished->load();
 		if(!gotFinished) {
-			removeExampleHandler(ptr);
+			ExampleEventProviderTpl<Rest...>::removeExampleHandler(ptr);
 		}
 		return gotFinished;
  	}
@@ -304,11 +316,11 @@ public:
 	
 	HandlerPtr onExample (Handler handler) {
 		std::lock_guard<std::mutex> guard(mutex);
-		return ExampleEventProvider::onExample(handler);
+		return ExampleEventProviderTpl<Rest...>::onExample(handler);
 	}
 	HandlerPtr onceExample (Handler handler) {
 		std::lock_guard<std::mutex> guard(mutex);
-		return ExampleEventProvider::onceExample(handler);
+		return ExampleEventProviderTpl<Rest...>::onceExample(handler);
 	}
 	HandlerPtr asyncOnExample (Handler handler) {
 		return onExample(EventEmitter::wrapLambdaInAsync(handler));
@@ -316,7 +328,7 @@ public:
 	HandlerPtr asyncOnceExample (Handler handler) {
 		return onceExample(EventEmitter::wrapLambdaInAsync(handler));
 	}
-	auto futureOnceExample() -> decltype(future_for_function_args(dummy)) {
+	auto futureOnceExample() -> decltype(std::future<std::tuple<Rest...>>()) {
 		typedef decltype(tuple_for_function_args(dummy)) TupleEventType;
 		auto promise = std::make_shared<std::promise<TupleEventType>>();
 		auto future = promise->get_future();
@@ -326,14 +338,14 @@ public:
 	}
 	template<typename... Args> void triggerExample (Args&&... fargs) { 
 		std::lock_guard<std::mutex> guard(mutex);
-		ExampleEventProvider::triggerExample(fargs...);
+		ExampleEventProviderTpl<Rest...>::triggerExample(fargs...);
 		condition.notify_all();
 	}
 	template<typename... Args> void deferExample (Args&&... fargs) { 
 		runDeferred(
  			std::bind([=](Args... as) {
  			// NOTE: with this it does not fail!!! without this it fails
- 			this->ExampleEventProvider::triggerExample(as...);
+ 			this->ExampleEventProviderTpl<Rest...>::triggerExample(as...);
  			},
 			EventEmitter::forward_as_ref<Args>(fargs)...			
 			//fargs...
@@ -341,20 +353,61 @@ public:
 	}
 }; //_//
 
+#endif // EVENTEMITTER_DISABLE_THREADING
+
+#include <map>
+
+
+ #define __EVENTEMITTER_DISPATCHER(name, EVENTHANDLER_ARGS) //^//
+template<typename T, typename... Rest>
+class ExampleEventDispatcherTpl : public ExampleEventProviderTpl<Rest...> {
+ 	typedef typename ExampleEventProviderTpl<Rest...>::HandlerPtr HandlerPtr;
+	typedef typename ExampleEventProviderTpl<Rest...>::Handler Handler;
+	std::multimap<T, HandlerPtr> map;
+
+	ExampleEventDispatcherTpl() {
+		ExampleEventProviderTpl<Rest...>::onExample([=](T first, Rest...) {
+// 			auto ret = map.equal_range(first);
+// 			for(auto it = ret.first != ret.second;++it) {
+// 				(*(it->second))();
+// 			}
+		});
+	}
+	
+ 	HandlerPtr onExample (T first, Handler handler) {
+ 		
+ 		return ExampleEventProviderTpl<Rest...>::onExample(handler);
+ 	}
+ 	HandlerPtr onceExample (T first, Handler handler) {
+ 		
+ 		return ExampleEventProviderTpl<Rest...>::onceExample(handler);
+ 	}
+ }; //_//
+
 
 #if 0 //#//
 
 #define EventProvider(name, args) \
-__EVENTEMITTER_PROVIDER(name, args)
+__EVENTEMITTER_PROVIDER(name, args) \
+typedef __EVENTEMITTER_CONCAT(__EVENTEMITTER_CONCAT(name, EventProvider),Tpl)args __EVENTEMITTER_CONCAT(name, EventProvider);
 
 #define EventProviderDeferred(name, args) \
 __EVENTEMITTER_PROVIDER(name, args) \
-__EVENTEMITTER_PROVIDER_DEFERRED(name, args)
+__EVENTEMITTER_PROVIDER_DEFERRED(name, args) \
+typedef __EVENTEMITTER_CONCAT(__EVENTEMITTER_CONCAT(name, DeferredEventProvider),Tpl)args __EVENTEMITTER_CONCAT(name, DeferredEventProvider);
 
 #define EventProviderThreaded(name, args) \
 __EVENTEMITTER_PROVIDER(name, args) \
-__EVENTEMITTER_PROVIDER_THREADED(name, args)
+__EVENTEMITTER_PROVIDER_THREADED(name, args) \
+typedef __EVENTEMITTER_CONCAT(__EVENTEMITTER_CONCAT(name, ThreadedEventProvider),Tpl)args __EVENTEMITTER_CONCAT(name, ThreadedEventProvider);
 
 #endif //#//
+
+__EVENTEMITTER_PROVIDER(/**/,/**/)
+__EVENTEMITTER_PROVIDER_DEFERRED(/**/,/**/)
+
+#ifndef EVENTEMITTER_DISABLE_THREADING
+__EVENTEMITTER_PROVIDER_THREADED(/**/,/**/)
+#endif
 
 #endif // __EVENTEMITTER_SANE_HPP
