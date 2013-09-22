@@ -38,6 +38,10 @@ typedef ExampleDeferredEventProviderTpl<int, int, std::string> ExampleDeferredEv
 #ifndef EVENTEMITTER_DISABLE_THREADING
 typedef ExampleThreadedEventProviderTpl<int, int, std::string> ExampleThreadedEventProvider;
 #endif
+typedef ExampleEventDispatcherTpl<ExampleEventProviderTpl, std::string, int, int, std::string> ExampleEventDispatcher;
+
+typedef ExampleEventDispatcherTpl<ExampleDeferredEventProviderTpl, std::string, int, int, std::string> ExampleDeferredEventDispatcher;
+
 
 int main()
 {
@@ -146,7 +150,41 @@ int main()
 		
 	}, "EventDeferredProvider - on, once, trigger, removeAllHandlers");
 	
+	runTest([]{
+		ExampleEventDispatcher dispatcher;
+		dispatcher.onExample("test", [=](int a, int b, std::string str) {
+			assert(a == 12 && b == 14 && str == "TEST", "should have been properly dispatched");
+		});
+		dispatcher.onExample("test2", [=](int a, int b, std::string str) {
+			assert(false, "should not run");
+		});
+		dispatcher.triggerExample("test", 12, 14, "TEST");
+		
+	}, "EventDispatcher - on, trigger");
 
+	runTest([]{
+		ExampleDeferredEventDispatcher dispatcher;
+		int sum = 0;
+		dispatcher.onExample("test1", [&](int a, int b, std::string str) {
+			sum += a + b;
+		});
+		dispatcher.triggerExample("test", 12, 14, "TEST");
+		assert(sum == 0, "should not run at all");
+		dispatcher.runDeferred();
+		
+		dispatcher.triggerExample("test1", 12, 14, "TEST");
+		dispatcher.runDeferred();
+		assert(sum == 26, "should have proper result");
+		
+		dispatcher.onExample("test2", [&](int a, int b, std::string str) {
+			sum -= a + b;
+		});
+		dispatcher.triggerExample("test2", 5, 5, "TEST");
+		dispatcher.runDeferred();
+		assert(sum == 16, "should run second callback");
+		
+	}, "EventDeferredDispatcher - on, trigger, runDeferred");
+	
 #ifndef	EVENTEMITTER_DISABLE_THREADING
 	runTest([]{
 		ExampleThreadedEventProvider test;

@@ -263,20 +263,9 @@ class ExampleThreadedEventProviderTpl : public ExampleEventProviderTpl<Rest...>,
   std::condition_variable condition;
 	std::mutex m;
 
-	template <typename R, typename... T>
-	std::tuple<T...> tuple_for_function_args(R (*)(T...))
-	{
-		return std::tuple<T...>();
-	}
-	template <typename R, typename... T>
-	std::future<std::tuple<T...>> future_for_function_args(R (*)(T...))
-	{
-		return std::future<std::tuple<T...>>();
-	}
 	typedef typename ExampleEventProviderTpl<Rest...>::Handler Handler;
 	typedef typename ExampleEventProviderTpl<Rest...>::HandlerPtr HandlerPtr;
 	
-	static inline void dummy(Rest...) {}
 public:
 	ExampleThreadedEventProviderTpl() {
 	}	
@@ -329,7 +318,7 @@ public:
 		return onceExample(EventEmitter::wrapLambdaInAsync(handler));
 	}
 	auto futureOnceExample() -> decltype(std::future<std::tuple<Rest...>>()) {
-		typedef decltype(tuple_for_function_args(dummy)) TupleEventType;
+		typedef std::tuple<Rest...> TupleEventType;
 		auto promise = std::make_shared<std::promise<TupleEventType>>();
 		auto future = promise->get_future();
 		condition.notify_all();
@@ -357,31 +346,46 @@ public:
 
 #include <map>
 
+#define EventDispatcherBase ExampleEventProviderTpl //#//
 
  #define __EVENTEMITTER_DISPATCHER(name, EVENTHANDLER_ARGS) //^//
-template<typename T, typename... Rest>
-class ExampleEventDispatcherTpl : public ExampleEventProviderTpl<Rest...> {
- 	typedef typename ExampleEventProviderTpl<Rest...>::HandlerPtr HandlerPtr;
-	typedef typename ExampleEventProviderTpl<Rest...>::Handler Handler;
+template<template<typename...> class EventDispatcherBase, typename T, typename... Rest>
+class ExampleEventDispatcherTpl : public EventDispatcherBase<T, Rest...> {
+ 	typedef typename EventDispatcherBase<Rest...>::HandlerPtr HandlerPtr;
+	typedef typename EventDispatcherBase<Rest...>::Handler Handler;
 	std::multimap<T, HandlerPtr> map;
-
+	bool eraseLast = false;
+public:
 	ExampleEventDispatcherTpl() {
-		ExampleEventProviderTpl<Rest...>::onExample([=](T first, Rest...) {
-// 			auto ret = map.equal_range(first);
-// 			for(auto it = ret.first != ret.second;++it) {
-// 				(*(it->second))();
-// 			}
+		ExampleEventProviderTpl<T, Rest...>::onExample([&](T first, Rest... fargs) {
+ 			auto ret = map.equal_range(first);
+ 			for(auto it = ret.first;it != ret.second;) {
+ 				(*(it->second))(fargs...);
+				if(eraseLast) {
+					map.erase(it);
+					eraseLast = false;
+				}
+				else {
+					++it;
+				}
+ 			}
 		});
 	}
-	
  	HandlerPtr onExample (T first, Handler handler) {
- 		
- 		return ExampleEventProviderTpl<Rest...>::onExample(handler);
+		return map.insert(std::pair<T, HandlerPtr>(first,  std::make_shared<Handler>(handler)))->second;
  	}
  	HandlerPtr onceExample (T first, Handler handler) {
- 		
- 		return ExampleEventProviderTpl<Rest...>::onceExample(handler);
+		return map.insert(std::pair<T, HandlerPtr>(first,  std::make_shared<Handler>(
+			wrapLambdaWithCallback(handler, [&] {
+				eraseLast = true;
+			}))))->second;
  	}
+ 	HandlerPtr removeExampleHandler (T first, Handler handler) {
+		// TODO
+	}
+	HandlerPtr removeAllExampleHandlers (T first, Handler handler) {
+		// TODO
+	}
  }; //_//
 
 

@@ -263,20 +263,9 @@ class __EVENTEMITTER_CONCAT(name,ThreadedEventProviderTpl) : public __EVENTEMITT
   std::condition_variable condition; \
 	std::mutex m; \
  \
-	template <typename R, typename... T> \
-	std::tuple<T...> tuple_for_function_args(R (*)(T...)) \
-	{ \
-		return std::tuple<T...>(); \
-	} \
-	template <typename R, typename... T> \
-	std::future<std::tuple<T...>> future_for_function_args(R (*)(T...)) \
-	{ \
-		return std::future<std::tuple<T...>>(); \
-	} \
 	typedef typename __EVENTEMITTER_CONCAT(name,EventProviderTpl)<Rest...>::Handler Handler; \
 	typedef typename __EVENTEMITTER_CONCAT(name,EventProviderTpl)<Rest...>::HandlerPtr HandlerPtr; \
 	 \
-	static inline void dummy(Rest...) {} \
 public: \
 	__EVENTEMITTER_CONCAT(name,ThreadedEventProviderTpl)() { \
 	}	 \
@@ -329,7 +318,7 @@ public: \
 		return __EVENTEMITTER_CONCAT(once,name)(EventEmitter::wrapLambdaInAsync(handler)); \
 	} \
 	auto __EVENTEMITTER_CONCAT(futureOnce,name)() -> decltype(std::future<std::tuple<Rest...>>()) { \
-		typedef decltype(tuple_for_function_args(dummy)) TupleEventType; \
+		typedef std::tuple<Rest...> TupleEventType; \
 		auto promise = std::make_shared<std::promise<TupleEventType>>(); \
 		auto future = promise->get_future(); \
 		condition.notify_all(); \
@@ -358,30 +347,45 @@ public: \
 #include <map>
 
 
+
  #define __EVENTEMITTER_DISPATCHER(name, EVENTHANDLER_ARGS)  \
-template<typename T, typename... Rest> \
-class __EVENTEMITTER_CONCAT(name,EventDispatcherTpl) : public __EVENTEMITTER_CONCAT(name,EventProviderTpl)<Rest...> { \
- 	typedef typename __EVENTEMITTER_CONCAT(name,EventProviderTpl)<Rest...>::HandlerPtr HandlerPtr; \
-	typedef typename __EVENTEMITTER_CONCAT(name,EventProviderTpl)<Rest...>::Handler Handler; \
+template<template<typename...> class EventDispatcherBase, typename T, typename... Rest> \
+class __EVENTEMITTER_CONCAT(name,EventDispatcherTpl) : public EventDispatcherBase<T, Rest...> { \
+ 	typedef typename EventDispatcherBase<Rest...>::HandlerPtr HandlerPtr; \
+	typedef typename EventDispatcherBase<Rest...>::Handler Handler; \
 	std::multimap<T, HandlerPtr> map; \
- \
+	bool eraseLast = false; \
+public: \
 	__EVENTEMITTER_CONCAT(name,EventDispatcherTpl)() { \
-		__EVENTEMITTER_CONCAT(name,EventProviderTpl)<Rest...>::__EVENTEMITTER_CONCAT(on,name)([=](T first, Rest...) { \
-  \
-  \
-  \
-  \
+		__EVENTEMITTER_CONCAT(name,EventProviderTpl)<T, Rest...>::__EVENTEMITTER_CONCAT(on,name)([&](T first, Rest... fargs) { \
+ 			auto ret = map.equal_range(first); \
+ 			for(auto it = ret.first;it != ret.second;) { \
+ 				(*(it->second))(fargs...); \
+				if(eraseLast) { \
+					map.erase(it); \
+					eraseLast = false; \
+				} \
+				else { \
+					++it; \
+				} \
+ 			} \
 		}); \
 	} \
-	 \
  	HandlerPtr __EVENTEMITTER_CONCAT(on,name) (T first, Handler handler) { \
- 		 \
- 		return __EVENTEMITTER_CONCAT(name,EventProviderTpl)<Rest...>::__EVENTEMITTER_CONCAT(on,name)(handler); \
+		return map.insert(std::pair<T, HandlerPtr>(first,  std::make_shared<Handler>(handler)))->second; \
  	} \
  	HandlerPtr __EVENTEMITTER_CONCAT(once,name) (T first, Handler handler) { \
- 		 \
- 		return __EVENTEMITTER_CONCAT(name,EventProviderTpl)<Rest...>::__EVENTEMITTER_CONCAT(once,name)(handler); \
+		return map.insert(std::pair<T, HandlerPtr>(first,  std::make_shared<Handler>( \
+			wrapLambdaWithCallback(handler, [&] { \
+				eraseLast = true; \
+			}))))->second; \
  	} \
+ 	HandlerPtr __EVENTEMITTER_CONCAT(remove,__EVENTEMITTER_CONCAT(name, Handler)) (T first, Handler handler) { \
+		 \
+	} \
+	HandlerPtr __EVENTEMITTER_CONCAT(removeAll,__EVENTEMITTER_CONCAT(name, Handlers)) (T first, Handler handler) { \
+		 \
+	} \
  };  
 
 
