@@ -2,7 +2,7 @@
 
 #include <cassert>
 
-EventProvider(Test, <>)
+DefineEventProvider(Test)
 
 int main(void)
 {

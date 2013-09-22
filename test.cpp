@@ -33,14 +33,14 @@ void runTest(std::function<void()> test, const std::string& str) {
 }
 
 
-typedef ExampleEventProviderTpl<int, int, std::string> ExampleEventProvider;
-typedef ExampleDeferredEventProviderTpl<int, int, std::string> ExampleDeferredEventProvider;
+typedef ExampleEventProvider<int, int, std::string> ExampleEventProviderImpl;
+typedef ExampleDeferredEventProvider<int, int, std::string> ExampleDeferredEventProviderImpl;
 #ifndef EVENTEMITTER_DISABLE_THREADING
-typedef ExampleThreadedEventProviderTpl<int, int, std::string> ExampleThreadedEventProvider;
+typedef ExampleThreadedEventProvider<int, int, std::string> ExampleThreadedEventProviderImpl;
 #endif
-typedef ExampleEventDispatcherTpl<ExampleEventProviderTpl, std::string, int, int, std::string> ExampleEventDispatcher;
+typedef ExampleEventDispatcher<ExampleEventProvider, std::string, int, int, std::string> ExampleEventDispatcherImpl;
 
-typedef ExampleEventDispatcherTpl<ExampleDeferredEventProviderTpl, std::string, int, int, std::string> ExampleDeferredEventDispatcher;
+typedef ExampleEventDispatcher<ExampleDeferredEventProvider, std::string, int, int, std::string> ExampleDeferredEventDispatcherImpl;
 
 
 int main()
@@ -48,7 +48,7 @@ int main()
 	
 	runTest([] {
 		int counter1 = 0, counter2 = 0;
-		ExampleEventProvider test;
+		ExampleEventProviderImpl test;
 		test.onExample([&counter1](int a, int b, std::string str) {
 			counter1 += a + b;
 		});
@@ -69,7 +69,7 @@ int main()
 	}, "EventProvider - on, once, trigger");
 	
 	runTest([] {
-		ExampleEventProvider test;
+		ExampleEventProviderImpl test;
 		int sum = 0;
 		auto lambda = [&](int a, int b, std::string str) {
 			sum += a + b;
@@ -90,7 +90,7 @@ int main()
 	
 	
 	runTest([] {
-		ExampleEventProvider test;
+		ExampleEventProviderImpl test;
 		int sum = 0;
 		auto lambda = [&](int a, int b, std::string str) {
 			sum += a + b;
@@ -121,7 +121,7 @@ int main()
 	// 		}, "EventProvider - removeHandler from within self");
 	runTest([] {
 		int counter1 = 0, counter2 = 0;
-		ExampleDeferredEventProvider test;
+		ExampleDeferredEventProviderImpl test;
 		test.onExample([&counter1](int a, int b, std::string str) {
 			counter1 += a + b;
 		});
@@ -151,7 +151,7 @@ int main()
 	}, "EventDeferredProvider - on, once, trigger, removeAllHandlers");
 	
 	runTest([]{
-		ExampleEventDispatcher dispatcher;
+		ExampleEventDispatcherImpl dispatcher;
 		dispatcher.onExample("test", [=](int a, int b, std::string str) {
 			assert(a == 12 && b == 14 && str == "TEST", "should have been properly dispatched");
 		});
@@ -163,7 +163,7 @@ int main()
 	}, "EventDispatcher - on, trigger");
 
 	runTest([]{
-		ExampleDeferredEventDispatcher dispatcher;
+		ExampleDeferredEventDispatcherImpl dispatcher;
 		int sum = 0;
 		dispatcher.onExample("test1", [&](int a, int b, std::string str) {
 			sum += a + b;
@@ -187,7 +187,7 @@ int main()
 	
 #ifndef	EVENTEMITTER_DISABLE_THREADING
 	runTest([]{
-		ExampleThreadedEventProvider test;
+		ExampleThreadedEventProviderImpl test;
 		auto future = test.futureOnceExample();
 		test.triggerExample(213, 999, "B");
 		auto t = future.get();
@@ -202,7 +202,7 @@ int main()
 	
 	
 	runTest([]{
-		ExampleThreadedEventProvider test;
+		ExampleThreadedEventProviderImpl test;
 		auto f = std::async(std::launch::async, [=,&test]() {
 			std::this_thread::sleep_for(std::chrono::milliseconds(100));
 			test.triggerExample(10, 20, "ASYNC");
@@ -221,7 +221,7 @@ int main()
 	}, "EventThreadedProvider - wait for trigger in std::async");
 		
 	runTest([]{
-		ExampleThreadedEventProvider test;
+		ExampleThreadedEventProviderImpl test;
 		auto f = std::async(std::launch::async, [=,&test]() {
 			std::this_thread::sleep_for(std::chrono::milliseconds(100));
 			test.triggerExample(10, 20, "ASYNC");
@@ -234,7 +234,7 @@ int main()
 	}, "EventThreadedProvider - wait for trigger in std::async with timeout");
 	
 	runTest([]{
-		ExampleThreadedEventProvider test;
+		ExampleThreadedEventProviderImpl test;
 		bool async = false;
 		std::thread::id id;
 		test.asyncOnceExample([&](int, int, std::string str) {

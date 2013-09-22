@@ -24,8 +24,6 @@
 #define __EVENTEMITTER_CONCAT_IMPL(x, y) x ## y
 #define __EVENTEMITTER_CONCAT(x, y) __EVENTEMITTER_CONCAT_IMPL(x, y)
 
-#define EVENTHANDLER_ARGS (int, int, std::string) //#//
-
 #ifndef __EVENTEMITTER_NONMACRO_DEFS
 #define __EVENTEMITTER_NONMACRO_DEFS
 namespace EventEmitter {
@@ -176,9 +174,9 @@ private:
 #define __EVENTEMITTER_CONTAINER std::forward_list<HandlerPtr>
 #endif
 
-#define __EVENTEMITTER_PROVIDER(name, EVENTHANDLER_ARGS) //^//
+#define __EVENTEMITTER_PROVIDER(frontname, name) //^//
 template<typename... Rest>
-class ExampleEventProviderTpl {
+class ExampleEventProvider {
 public:
 	typedef std::function<void(Rest...)> Handler;
 	typedef std::shared_ptr<Handler> HandlerPtr;
@@ -236,38 +234,38 @@ public:
 		if(eventHandlers)
 			eventHandlers->clear();
 	}
-	~ExampleEventProviderTpl() {
+	~ExampleEventProvider() {
 		if(eventHandlers) {
 			delete eventHandlers;
 		}
 	}
 }; //_//
 
-#define __EVENTEMITTER_PROVIDER_DEFERRED(name, EVENTHANDLER_ARGS) //^//
+#define __EVENTEMITTER_PROVIDER_DEFERRED(frontname, name) //^//
 template<typename... Rest>
-class ExampleDeferredEventProviderTpl : public ExampleEventProviderTpl<Rest...>, public virtual EventEmitter::DeferredBase {
+class ExampleDeferredEventProvider : public ExampleEventProvider<Rest...>, public virtual EventEmitter::DeferredBase {
 public:
 	template<typename... Args> void triggerExample (Args&&... fargs) {
 		runDeferred(
 			std::bind([=](Args... as) {
-			this->ExampleEventProviderTpl<Rest...>::triggerExample(as...);
+			this->ExampleEventProvider<Rest...>::triggerExample(as...);
 			}, EventEmitter::forward_as_ref<Args>(fargs)...));
 	}
 }; //_//
 
 #ifndef EVENTEMITTER_DISABLE_THREADING
 
-#define __EVENTEMITTER_PROVIDER_THREADED(name, EVENTHANDLER_ARGS) //^//
+#define __EVENTEMITTER_PROVIDER_THREADED(frontname, name) //^//
 template<typename... Rest>
-class ExampleThreadedEventProviderTpl : public ExampleEventProviderTpl<Rest...>, public virtual EventEmitter::DeferredBase { 
+class ExampleThreadedEventProvider : public ExampleEventProvider<Rest...>, public virtual EventEmitter::DeferredBase { 
   std::condition_variable condition;
 	std::mutex m;
 
-	typedef typename ExampleEventProviderTpl<Rest...>::Handler Handler;
-	typedef typename ExampleEventProviderTpl<Rest...>::HandlerPtr HandlerPtr;
+	typedef typename ExampleEventProvider<Rest...>::Handler Handler;
+	typedef typename ExampleEventProvider<Rest...>::HandlerPtr HandlerPtr;
 	
 public:
-	ExampleThreadedEventProviderTpl() {
+	ExampleThreadedEventProvider() {
 	}	
 	bool waitExample (std::chrono::milliseconds duration = std::chrono::milliseconds::max()) {
 		waitExample([=](Rest...) {
@@ -292,7 +290,7 @@ public:
 		}
 		bool gotFinished = finished->load();
 		if(!gotFinished) {
-			ExampleEventProviderTpl<Rest...>::removeExampleHandler(ptr);
+			ExampleEventProvider<Rest...>::removeExampleHandler(ptr);
 		}
 		return gotFinished;
  	}
@@ -305,11 +303,11 @@ public:
 	
 	HandlerPtr onExample (Handler handler) {
 		std::lock_guard<std::mutex> guard(mutex);
-		return ExampleEventProviderTpl<Rest...>::onExample(handler);
+		return ExampleEventProvider<Rest...>::onExample(handler);
 	}
 	HandlerPtr onceExample (Handler handler) {
 		std::lock_guard<std::mutex> guard(mutex);
-		return ExampleEventProviderTpl<Rest...>::onceExample(handler);
+		return ExampleEventProvider<Rest...>::onceExample(handler);
 	}
 	HandlerPtr asyncOnExample (Handler handler) {
 		return onExample(EventEmitter::wrapLambdaInAsync(handler));
@@ -327,14 +325,14 @@ public:
 	}
 	template<typename... Args> void triggerExample (Args&&... fargs) { 
 		std::lock_guard<std::mutex> guard(mutex);
-		ExampleEventProviderTpl<Rest...>::triggerExample(fargs...);
+		ExampleEventProvider<Rest...>::triggerExample(fargs...);
 		condition.notify_all();
 	}
 	template<typename... Args> void deferExample (Args&&... fargs) { 
 		runDeferred(
  			std::bind([=](Args... as) {
  			// NOTE: with this it does not fail!!! without this it fails
- 			this->ExampleEventProviderTpl<Rest...>::triggerExample(as...);
+ 			this->ExampleEventProvider<Rest...>::triggerExample(as...);
  			},
 			EventEmitter::forward_as_ref<Args>(fargs)...			
 			//fargs...
@@ -346,18 +344,18 @@ public:
 
 #include <map>
 
-#define EventDispatcherBase ExampleEventProviderTpl //#//
+#define EventDispatcherBase ExampleEventProvider //#//
 
- #define __EVENTEMITTER_DISPATCHER(name, EVENTHANDLER_ARGS) //^//
+ #define __EVENTEMITTER_DISPATCHER(frontname, name) //^//
 template<template<typename...> class EventDispatcherBase, typename T, typename... Rest>
-class ExampleEventDispatcherTpl : public EventDispatcherBase<T, Rest...> {
+class ExampleEventDispatcher : public EventDispatcherBase<T, Rest...> {
  	typedef typename EventDispatcherBase<Rest...>::HandlerPtr HandlerPtr;
 	typedef typename EventDispatcherBase<Rest...>::Handler Handler;
 	std::multimap<T, HandlerPtr> map;
 	bool eraseLast = false;
 public:
-	ExampleEventDispatcherTpl() {
-		ExampleEventProviderTpl<T, Rest...>::onExample([&](T first, Rest... fargs) {
+	ExampleEventDispatcher() {
+		ExampleEventProvider<T, Rest...>::onExample([&](T first, Rest... fargs) {
  			auto ret = map.equal_range(first);
  			for(auto it = ret.first;it != ret.second;) {
  				(*(it->second))(fargs...);
@@ -391,19 +389,19 @@ public:
 
 #if 0 //#//
 
-#define EventProvider(name, args) \
-__EVENTEMITTER_PROVIDER(name, args) \
-typedef __EVENTEMITTER_CONCAT(__EVENTEMITTER_CONCAT(name, EventProvider),Tpl)args __EVENTEMITTER_CONCAT(name, EventProvider);
+#define DefineEventProvider(name, ...) \
+__EVENTEMITTER_PROVIDER(__EVENTEMITTER_CONCAT(Tpl, name), name) \
+typedef __EVENTEMITTER_CONCAT(__EVENTEMITTER_CONCAT(Tpl, name), EventProvider) <__VA_ARGS__> __EVENTEMITTER_CONCAT(name, EventProvider);
 
-#define EventProviderDeferred(name, args) \
-__EVENTEMITTER_PROVIDER(name, args) \
-__EVENTEMITTER_PROVIDER_DEFERRED(name, args) \
-typedef __EVENTEMITTER_CONCAT(__EVENTEMITTER_CONCAT(name, DeferredEventProvider),Tpl)args __EVENTEMITTER_CONCAT(name, DeferredEventProvider);
+#define DefineEventProviderDeferred(name, ...) \
+__EVENTEMITTER_PROVIDER(__EVENTEMITTER_CONCAT(Tpl, name),name) \
+__EVENTEMITTER_PROVIDER_DEFERRED(__EVENTEMITTER_CONCAT(Tpl, name),name) \
+typedef __EVENTEMITTER_CONCAT(__EVENTEMITTER_CONCAT(Tpl, name), DeferredEventProvider)  <__VA_ARGS__> __EVENTEMITTER_CONCAT(name, DeferredEventProvider);
 
-#define EventProviderThreaded(name, args) \
-__EVENTEMITTER_PROVIDER(name, args) \
-__EVENTEMITTER_PROVIDER_THREADED(name, args) \
-typedef __EVENTEMITTER_CONCAT(__EVENTEMITTER_CONCAT(name, ThreadedEventProvider),Tpl)args __EVENTEMITTER_CONCAT(name, ThreadedEventProvider);
+#define DefineEventProviderThreaded(name, ...) \
+__EVENTEMITTER_PROVIDER(__EVENTEMITTER_CONCAT(Tpl, name),name) \
+__EVENTEMITTER_PROVIDER_THREADED(__EVENTEMITTER_CONCAT(Tpl, name),name) \
+typedef __EVENTEMITTER_CONCAT(__EVENTEMITTER_CONCAT(Tpl, name), ThreadedEventProvider) <__VA_ARGS__> __EVENTEMITTER_CONCAT(name, ThreadedEventProvider);
 
 #endif //#//
 

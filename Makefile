@@ -1,4 +1,4 @@
-all: EventEmitter.hpp test benchmark
+all: EventEmitter.hpp test benchmark example
 
 EventEmitter.hpp: EventEmitter.sane.hpp compile.pl Makefile
 	./compile.pl < EventEmitter.sane.hpp > EventEmitter.hpp
@@ -8,5 +8,9 @@ test: test.cpp EventEmitter.hpp EventEmitter.sane.hpp
 
 benchmark: benchmark.cpp EventEmitter.hpp
 	$(CXX) benchmark.cpp -std=c++11 -o benchmark -g -lpthread -O3 -save-temps $(DEFS)
+
+example: example.cpp EventEmitter.hpp
+	$(CXX) example.cpp -std=c++11 -o example
+
 clean:
 	rm test EventEmitter.hpp
