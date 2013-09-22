@@ -1,14 +1,20 @@
 #!/usr/bin/perl
 
 my $macro_mode = 0;
+$/ = undef;
+my $input = <>;
+$input =~ s#/\*[^*]*\*+([^/*][^*]*\*+)*/|("(\\.|[^"\\])*"|'(\\.|[^'\\])*'|.[^/"'\\]*)#defined $2 ? $2 : ""#gse;
+@lines = split(/\n/, $input);
 
-my @lines = <>;
+#print STDERR @lines;
+
 for my $line(@lines) {
-	if($line =~ /\/\/\*\/\/$/) {
+	if($line =~ /\/\/\#\/\/$/) {
 		print "\n";
 		next;
 	}
 
+	$line =~ s/__EVENTEMITTER_SANE_HPP/"__EVENTEMITTER_HPP"/exg;
 	$line =~ s/(\w+)Example(\w+)/"__EVENTEMITTER_CONCAT(".$1.",__EVENTEMITTER_CONCAT(name, ".$2."))"/exg;	
 	$line =~ s/Example(\w+)/"__EVENTEMITTER_CONCAT(name,".$1.")"/exg;
 	$line =~ s/(\w+)Example/"__EVENTEMITTER_CONCAT(".$1.",name)"/exg;
@@ -29,10 +35,9 @@ for my $line(@lines) {
 	}
 	elsif($macro_mode) {
 		$line =~ s/(\/\/.*$)/ /g;
-		chomp $line;
 		print $line . " \\\n";
 		next;
 	}
 
-	print $line;
+	print $line . "\n";
 }

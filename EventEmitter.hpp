@@ -1,7 +1,14 @@
 #ifndef __EVENTEMITTER_HPP
 #define __EVENTEMITTER_HPP
 
+#ifdef __EVENTEMITTER_TESTING
+#undef __EVENTEMITTER_PROVIDER
+#undef __EVENTEMITTER_PROVIDER_THREADED
+#undef __EVENTEMITTER_PROVIDER_DEFERRED
+#endif
+
 #include <functional>
+#include <forward_list>
 #include <set>
 #include <unordered_set>
 #include <memory>
@@ -19,13 +26,13 @@
 
 
 
-
+#ifndef __EVENTEMITTER_NONMACRO_DEFS
+#define __EVENTEMITTER_NONMACRO_DEFS
 namespace EventEmitter {
 	
 	class DeferredBase {
 	protected: 
 		typedef std::function<void ()> DeferredHandler;
-		typedef std::unique_ptr<DeferredHandler> DeferredHandlerPtr;
 		std::deque<DeferredHandler>* deferredQueue = nullptr;
 		std::mutex mutex;
 		inline void assureContainer() {
@@ -63,6 +70,8 @@ namespace EventEmitter {
 		}
 	};
 	
+	// reference_wrapper needs to be use instead of std::reference_wrapper
+	// this is because of VS2013 (RC) bug
 	template<class T> class reference_wrapper
 	{
 	public:
@@ -76,7 +85,7 @@ private:
 };
 	
 
-// source: stackoverflow.com/questions/15501301/binding-function-arguments-in-c11
+  // source: stackoverflow.com/questions/15501301/binding-function-arguments-in-c11
 	template<typename T> struct forward_as_ref_type {
    typedef T &&type;
 	};
@@ -91,10 +100,10 @@ private:
    typename std::remove_reference<T>::type &&t) {
       return t;
 	 }
-// 	template<class T>
-//   std::reference_wrapper<T> maybe_ref(T& v, int){ return std::ref(v); }
-//   template<class T> T&& maybe_ref(T&& v, long){ return std::forward<T>(v); }
-// ^^^^^^ alternative way, possibly more hackish
+ // 	template<class T>
+ //   std::reference_wrapper<T> maybe_ref(T& v, int){ return std::ref(v); }
+ //   template<class T> T&& maybe_ref(T&& v, long){ return std::forward<T>(v); }
+ // ^^^^^^ alternative way, possibly more hackish
 	
 	template<typename... Args>
 	class LambdaCallbackWrapper
@@ -155,65 +164,71 @@ private:
 	};
 	
 }
+#endif // __EVENTEMITTER_NONMACRO_DEFS
 
 
-#define __EVENTEMITTER_CONTAINER std::unordered_set<HandlerPtr, std::hash<HandlerPtr>, std::less<HandlerPtr>, std::allocator<HandlerPtr>>
+#ifndef __EVENTEMITTER_CONTAINER
+#define __EVENTEMITTER_CONTAINER std::forward_list<HandlerPtr>
+#endif
 
-#define __EVENTEMITTER_PROVIDER(name, args)  \
+#define __EVENTEMITTER_PROVIDER(name, EVENTHANDLER_ARGS)  \
 class __EVENTEMITTER_CONCAT(name,EventProvider) { \
 public: \
-	typedef std::function<void args> Handler; \
+	typedef std::function<void EVENTHANDLER_ARGS> Handler; \
 	typedef std::shared_ptr<Handler> HandlerPtr; \
 private: \
  	struct EventHandlersSet : public __EVENTEMITTER_CONTAINER { \
- 		bool eraseLast = false; \
+		EventHandlersSet() : eraseLast(false) {} \
+ 		bool eraseLast : 8; \
  	}; \
 	EventHandlersSet* eventHandlers = nullptr; \
 public: \
 	HandlerPtr __EVENTEMITTER_CONCAT(on,name) (Handler handler) { \
 	  if(!eventHandlers) \
 			eventHandlers = new EventHandlersSet; \
-		auto i = eventHandlers->insert(std::make_shared<Handler>(handler)); \
-		return *(i.first); \
+		eventHandlers->emplace_front(std::make_shared<Handler>(handler)); \
+		return eventHandlers->front(); \
 	} \
 	HandlerPtr __EVENTEMITTER_CONCAT(once,name) (Handler handler) { \
 	  if(!eventHandlers) \
 			eventHandlers = new EventHandlersSet; \
-		auto i = eventHandlers->insert(std::make_shared<Handler>(EventEmitter::wrapLambdaWithCallback(std::function<void args>(handler), [=]() { \
+		eventHandlers->emplace_front( std::make_shared<Handler>(EventEmitter::wrapLambdaWithCallback(handler, [=]() { \
 			eventHandlers->eraseLast = true; \
 		}))); \
-		return *(i.first); \
+		return eventHandlers->front(); \
 	} \
 	template<typename... Args> inline void __EVENTEMITTER_CONCAT(trigger,name) (Args&&... fargs) { \
 	  if(!eventHandlers) \
 			return; \
+		auto prev = eventHandlers->before_begin();  \
 	  for(auto i = eventHandlers->begin();i != eventHandlers->end();) { \
+			 \
 			(*(*i))(fargs...); \
 			if(eventHandlers->eraseLast) { \
-				i = eventHandlers->erase(i); \
+				i = eventHandlers->erase_after(prev); \
 				eventHandlers->eraseLast = false; \
 			} \
-			else \
+			else { \
 				++i; \
+				++prev; \
+			} \
 		} \
 	} \
 	HandlerPtr __EVENTEMITTER_CONCAT(remove,__EVENTEMITTER_CONCAT(name, Handler)) (HandlerPtr handlerPtr) { \
-	  if(eventHandlers) {  \
-			for(auto i = eventHandlers->begin();i != eventHandlers->end();++i) {  \
+ 	  if(eventHandlers) { 			 \
+ 			auto prev = eventHandlers->before_begin();  \
+			for(auto i = eventHandlers->begin();i != eventHandlers->end();++i,++prev) {  \
 				if((i)->get() == handlerPtr.get()) { \
-					eventHandlers->erase(i); \
+					eventHandlers->erase_after(prev); \
 					return handlerPtr; \
 				} \
 			} \
-		} \
+ 		} \
+ 		return HandlerPtr(); \
 	} \
-	void __EVENTEMITTER_CONCAT(removeAll,__EVENTEMITTER_CONCAT(name, Handlers)) (bool freeAllMemory = false) { \
-	  if(eventHandlers) \
+	void __EVENTEMITTER_CONCAT(removeAll,__EVENTEMITTER_CONCAT(name, Handlers)) () { \
+		if(eventHandlers) \
 			eventHandlers->clear(); \
-		if(freeAllMemory) { \
-			delete eventHandlers; \
-			eventHandlers = nullptr; \
-		} \
 	} \
 	~__EVENTEMITTER_CONCAT(name,EventProvider)() { \
 		if(eventHandlers) { \
@@ -222,7 +237,7 @@ public: \
 	} \
 };  
 
-#define __EVENTEMITTER_PROVIDER_DEFERRED(name, args)  \
+#define __EVENTEMITTER_PROVIDER_DEFERRED(name, EVENTHANDLER_ARGS)  \
 class __EVENTEMITTER_CONCAT(name,DeferredEventProvider) : public __EVENTEMITTER_CONCAT(name,EventProvider), public virtual EventEmitter::DeferredBase { \
 public: \
 	template<typename... Args> void __EVENTEMITTER_CONCAT(trigger,name) (Args&&... fargs) { \
@@ -233,7 +248,7 @@ public: \
 	} \
 };  
 
-#define __EVENTEMITTER_PROVIDER_THREADED(name, args)  \
+#define __EVENTEMITTER_PROVIDER_THREADED(name, EVENTHANDLER_ARGS)  \
 class __EVENTEMITTER_CONCAT(name,ThreadedEventProvider) : public __EVENTEMITTER_CONCAT(name,EventProvider), public virtual EventEmitter::DeferredBase {  \
   std::condition_variable condition; \
 	std::mutex m; \
@@ -249,12 +264,12 @@ class __EVENTEMITTER_CONCAT(name,ThreadedEventProvider) : public __EVENTEMITTER_
 		return std::future<std::tuple<T...>>(); \
 	} \
  \
-	static inline void dummy(int, int, std::string) {} \
+	static inline void dummy EVENTHANDLER_ARGS {} \
 public: \
 	__EVENTEMITTER_CONCAT(name,ThreadedEventProvider)() { \
 	}	 \
 	bool __EVENTEMITTER_CONCAT(wait,name) (std::chrono::milliseconds duration = std::chrono::milliseconds::max()) { \
-		__EVENTEMITTER_CONCAT(wait,name)([=](int, int, std::string str) { \
+		__EVENTEMITTER_CONCAT(wait,name)([=] EVENTHANDLER_ARGS { \
 		}, duration); \
  	} \
  	bool __EVENTEMITTER_CONCAT(wait,name) (Handler handler, std::chrono::milliseconds duration = std::chrono::milliseconds::max()) { \
@@ -265,9 +280,15 @@ public: \
 				finished->store(true); \
 				condition.notify_all(); \
 		})); \
-		condition.wait_for(lk, duration, [=]() { \
-			return finished->load(); \
-		}); \
+		 \
+		if(duration == std::chrono::milliseconds::max()) { \
+			condition.wait(lk); \
+		}  \
+		else { \
+			condition.wait_for(lk, duration, [=]() { \
+				return finished->load(); \
+			}); \
+		} \
 		bool gotFinished = finished->load(); \
 		if(!gotFinished) { \
 			__EVENTEMITTER_CONCAT(remove,__EVENTEMITTER_CONCAT(name, Handler))(ptr); \
@@ -306,14 +327,9 @@ public: \
 	template<typename... Args> void __EVENTEMITTER_CONCAT(trigger,name) (Args&&... fargs) {  \
 		std::lock_guard<std::mutex> guard(mutex); \
 		__EVENTEMITTER_CONCAT(name,EventProvider)::__EVENTEMITTER_CONCAT(trigger,name)(fargs...); \
-		std::cout << "Trigerring\n"; \
 		condition.notify_all(); \
 	} \
 	template<typename... Args> void __EVENTEMITTER_CONCAT(defer,name) (Args&&... fargs) {  \
-		runDeferred([=](int, int, std::string) { \
-			std::cout << "defer Trigerring\n"; \
-		}); \
-		return; \
 		runDeferred( \
  			std::bind([=](Args... as) { \
  			  \
@@ -326,6 +342,8 @@ public: \
 };  
 
 
+
+
 #define EventProvider(name, args) \
 __EVENTEMITTER_PROVIDER(name, args)
 
@@ -336,6 +354,7 @@ __EVENTEMITTER_PROVIDER_DEFERRED(name, args)
 #define EventProviderThreaded(name, args) \
 __EVENTEMITTER_PROVIDER(name, args) \
 __EVENTEMITTER_PROVIDER_THREADED(name, args)
+
 
 
 #endif // __EVENTEMITTER_HPP
