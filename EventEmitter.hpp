@@ -436,12 +436,12 @@ public: \
 __EVENTEMITTER_PROVIDER(name, name) \
 typedef __EVENTEMITTER_CONCAT(name, EventEmitterTpl)<__VA_ARGS__> __EVENTEMITTER_CONCAT(name, EventEmitter);
 
-#define DefineEventEmitterDeferred(name, ...) \
+#define DefineDeferredEventEmitter(name, ...) \
 __EVENTEMITTER_PROVIDER(name,name) \
 __EVENTEMITTER_PROVIDER_DEFERRED(name,name) \
 typedef __EVENTEMITTER_CONCAT(name, DeferredEventEmitterTpl)<__VA_ARGS__> __EVENTEMITTER_CONCAT(name, DeferredEventEmitter);
 
-#define DefineEventEmitterThreaded(name, ...) \
+#define DefineThreadedEventEmitter(name, ...) \
 __EVENTEMITTER_PROVIDER(name,name) \
 __EVENTEMITTER_PROVIDER_THREADED(name,name) \
 typedef __EVENTEMITTER_CONCAT(name, ThreadedEventEmitterTpl)<__VA_ARGS__> __EVENTEMITTER_CONCAT(name, ThreadedEventEmitter);
