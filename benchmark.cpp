@@ -2,11 +2,11 @@
 
 #include <cassert>
 
-DefineEventProvider(Test)
+DefineEventEmitter(Test)
 
 int main(void)
 {
-	TestEventProvider provider;
+	TestEventEmitter provider;
 	
 	int counter[10] = {0,};
 	auto setupHandlers = [&] {

@@ -26,7 +26,7 @@
 
 #ifndef __EVENTEMITTER_NONMACRO_DEFS
 #define __EVENTEMITTER_NONMACRO_DEFS
-namespace EventEmitter {
+namespace EE {
 	
 	class DeferredBase {
 		// TODO: disable mutex when EVENTEMITTER_DISABLE_THREADING
@@ -176,7 +176,7 @@ private:
 
 #define __EVENTEMITTER_PROVIDER(frontname, name) //^//
 template<typename... Rest>
-class ExampleEventProvider {
+class ExampleEventEmitterTpl {
 public:
 	typedef std::function<void(Rest...)> Handler;
 	typedef std::shared_ptr<Handler> HandlerPtr;
@@ -196,7 +196,7 @@ public:
 	HandlerPtr onceExample (Handler handler) {
 	  if(!eventHandlers)
 			eventHandlers = new EventHandlersSet;
-		eventHandlers->emplace_front( std::make_shared<Handler>(EventEmitter::wrapLambdaWithCallback(handler, [=]() {
+		eventHandlers->emplace_front( std::make_shared<Handler>(EE::wrapLambdaWithCallback(handler, [=]() {
 			eventHandlers->eraseLast = true;
 		})));
 		return eventHandlers->front();
@@ -234,7 +234,7 @@ public:
 		if(eventHandlers)
 			eventHandlers->clear();
 	}
-	~ExampleEventProvider() {
+	~ExampleEventEmitterTpl() {
 		if(eventHandlers) {
 			delete eventHandlers;
 		}
@@ -243,13 +243,13 @@ public:
 
 #define __EVENTEMITTER_PROVIDER_DEFERRED(frontname, name) //^//
 template<typename... Rest>
-class ExampleDeferredEventProvider : public ExampleEventProvider<Rest...>, public virtual EventEmitter::DeferredBase {
+class ExampleDeferredEventEmitterTpl : public ExampleEventEmitterTpl<Rest...>, public virtual EE::DeferredBase {
 public:
 	template<typename... Args> void triggerExample (Args&&... fargs) {
 		runDeferred(
 			std::bind([=](Args... as) {
-			this->ExampleEventProvider<Rest...>::triggerExample(as...);
-			}, EventEmitter::forward_as_ref<Args>(fargs)...));
+			this->ExampleEventEmitterTpl<Rest...>::triggerExample(as...);
+			}, EE::forward_as_ref<Args>(fargs)...));
 	}
 }; //_//
 
@@ -257,15 +257,15 @@ public:
 
 #define __EVENTEMITTER_PROVIDER_THREADED(frontname, name) //^//
 template<typename... Rest>
-class ExampleThreadedEventProvider : public ExampleEventProvider<Rest...>, public virtual EventEmitter::DeferredBase { 
+class ExampleThreadedEventEmitterTpl : public ExampleEventEmitterTpl<Rest...>, public virtual EE::DeferredBase { 
   std::condition_variable condition;
 	std::mutex m;
 
-	typedef typename ExampleEventProvider<Rest...>::Handler Handler;
-	typedef typename ExampleEventProvider<Rest...>::HandlerPtr HandlerPtr;
+	typedef typename ExampleEventEmitterTpl<Rest...>::Handler Handler;
+	typedef typename ExampleEventEmitterTpl<Rest...>::HandlerPtr HandlerPtr;
 	
 public:
-	ExampleThreadedEventProvider() {
+	ExampleThreadedEventEmitterTpl() {
 	}	
 	bool waitExample (std::chrono::milliseconds duration = std::chrono::milliseconds::max()) {
 		waitExample([=](Rest...) {
@@ -275,7 +275,7 @@ public:
 		std::shared_ptr<std::atomic<bool>> finished = std::make_shared<std::atomic<bool>>();
 		std::unique_lock<std::mutex> lk(m);
 		HandlerPtr ptr = onceExample(
-			EventEmitter::wrapLambdaWithCallback(handler, [=]() {
+			EE::wrapLambdaWithCallback(handler, [=]() {
 				finished->store(true);
 				this->condition.notify_all();
 		}));
@@ -290,7 +290,7 @@ public:
 		}
 		bool gotFinished = finished->load();
 		if(!gotFinished) {
-			ExampleEventProvider<Rest...>::removeExampleHandler(ptr);
+			ExampleEventEmitterTpl<Rest...>::removeExampleHandler(ptr);
 		}
 		return gotFinished;
  	}
@@ -303,38 +303,38 @@ public:
 	
 	HandlerPtr onExample (Handler handler) {
 		std::lock_guard<std::mutex> guard(mutex);
-		return ExampleEventProvider<Rest...>::onExample(handler);
+		return ExampleEventEmitterTpl<Rest...>::onExample(handler);
 	}
 	HandlerPtr onceExample (Handler handler) {
 		std::lock_guard<std::mutex> guard(mutex);
-		return ExampleEventProvider<Rest...>::onceExample(handler);
+		return ExampleEventEmitterTpl<Rest...>::onceExample(handler);
 	}
 	HandlerPtr asyncOnExample (Handler handler) {
-		return onExample(EventEmitter::wrapLambdaInAsync(handler));
+		return onExample(EE::wrapLambdaInAsync(handler));
 	}
 	HandlerPtr asyncOnceExample (Handler handler) {
-		return onceExample(EventEmitter::wrapLambdaInAsync(handler));
+		return onceExample(EE::wrapLambdaInAsync(handler));
 	}
 	auto futureOnceExample() -> decltype(std::future<std::tuple<Rest...>>()) {
 		typedef std::tuple<Rest...> TupleEventType;
 		auto promise = std::make_shared<std::promise<TupleEventType>>();
 		auto future = promise->get_future();
 		condition.notify_all();
-		onceExample(EventEmitter::getLambdaForFuture(promise));
+		onceExample(EE::getLambdaForFuture(promise));
 		return future;
 	}
 	template<typename... Args> void triggerExample (Args&&... fargs) { 
 		std::lock_guard<std::mutex> guard(mutex);
-		ExampleEventProvider<Rest...>::triggerExample(fargs...);
+		ExampleEventEmitterTpl<Rest...>::triggerExample(fargs...);
 		condition.notify_all();
 	}
 	template<typename... Args> void deferExample (Args&&... fargs) { 
 		runDeferred(
  			std::bind([=](Args... as) {
  			// NOTE: with this it does not fail!!! without this it fails
- 			this->ExampleEventProvider<Rest...>::triggerExample(as...);
+ 			this->ExampleEventEmitterTpl<Rest...>::triggerExample(as...);
  			},
-			EventEmitter::forward_as_ref<Args>(fargs)...			
+			EE::forward_as_ref<Args>(fargs)...			
 			//fargs...
 			));
 	}
@@ -344,18 +344,18 @@ public:
 
 #include <map>
 
-#define EventDispatcherBase ExampleEventProvider //#//
+#define EventDispatcherBase ExampleEventEmitter //#//
 
  #define __EVENTEMITTER_DISPATCHER(frontname, name) //^//
 template<template<typename...> class EventDispatcherBase, typename T, typename... Rest>
-class ExampleEventDispatcher : public EventDispatcherBase<T, Rest...> {
+class ExampleEventDispatcherTpl : public EventDispatcherBase<T, Rest...> {
  	typedef typename EventDispatcherBase<Rest...>::HandlerPtr HandlerPtr;
 	typedef typename EventDispatcherBase<Rest...>::Handler Handler;
 	std::multimap<T, HandlerPtr> map;
 	bool eraseLast = false;
 public:
-	ExampleEventDispatcher() {
-		ExampleEventProvider<T, Rest...>::onExample([&](T first, Rest... fargs) {
+	ExampleEventDispatcherTpl() {
+		ExampleEventEmitter<T, Rest...>::onExample([&](T first, Rest... fargs) {
  			auto ret = map.equal_range(first);
  			for(auto it = ret.first;it != ret.second;) {
  				(*(it->second))(fargs...);
@@ -389,27 +389,33 @@ public:
 
 #if 0 //#//
 
-#define DefineEventProvider(name, ...) \
-__EVENTEMITTER_PROVIDER(__EVENTEMITTER_CONCAT(Tpl, name), name) \
-typedef __EVENTEMITTER_CONCAT(__EVENTEMITTER_CONCAT(Tpl, name), EventProvider) <__VA_ARGS__> __EVENTEMITTER_CONCAT(name, EventProvider);
+#define DefineEventEmitter(name, ...) \
+__EVENTEMITTER_PROVIDER(name, name) \
+typedef __EVENTEMITTER_CONCAT(name, EventEmitterTpl)<__VA_ARGS__> __EVENTEMITTER_CONCAT(name, EventEmitter);
 
-#define DefineEventProviderDeferred(name, ...) \
-__EVENTEMITTER_PROVIDER(__EVENTEMITTER_CONCAT(Tpl, name),name) \
-__EVENTEMITTER_PROVIDER_DEFERRED(__EVENTEMITTER_CONCAT(Tpl, name),name) \
-typedef __EVENTEMITTER_CONCAT(__EVENTEMITTER_CONCAT(Tpl, name), DeferredEventProvider)  <__VA_ARGS__> __EVENTEMITTER_CONCAT(name, DeferredEventProvider);
+#define DefineEventEmitterDeferred(name, ...) \
+__EVENTEMITTER_PROVIDER(name,name) \
+__EVENTEMITTER_PROVIDER_DEFERRED(name,name) \
+typedef __EVENTEMITTER_CONCAT(name, DeferredEventEmitterTpl)<__VA_ARGS__> __EVENTEMITTER_CONCAT(name, DeferredEventEmitter);
 
-#define DefineEventProviderThreaded(name, ...) \
-__EVENTEMITTER_PROVIDER(__EVENTEMITTER_CONCAT(Tpl, name),name) \
-__EVENTEMITTER_PROVIDER_THREADED(__EVENTEMITTER_CONCAT(Tpl, name),name) \
-typedef __EVENTEMITTER_CONCAT(__EVENTEMITTER_CONCAT(Tpl, name), ThreadedEventProvider) <__VA_ARGS__> __EVENTEMITTER_CONCAT(name, ThreadedEventProvider);
+#define DefineEventEmitterThreaded(name, ...) \
+__EVENTEMITTER_PROVIDER(name,name) \
+__EVENTEMITTER_PROVIDER_THREADED(name,name) \
+typedef __EVENTEMITTER_CONCAT(name, ThreadedEventEmitterTpl)<__VA_ARGS__> __EVENTEMITTER_CONCAT(name, ThreadedEventEmitter);
 
-#endif //#//
 
 __EVENTEMITTER_PROVIDER(/**/,/**/)
+template<typename... Rest> class EventEmitter : public EventEmitterTpl<Rest...> {};
+
 __EVENTEMITTER_PROVIDER_DEFERRED(/**/,/**/)
+
+template<typename... Rest> class DeferredEventEmitter : public DeferredEventEmitterTpl<Rest...> {};
 
 #ifndef EVENTEMITTER_DISABLE_THREADING
 __EVENTEMITTER_PROVIDER_THREADED(/**/,/**/)
 #endif
+
+#endif //#//
+
 
 #endif // __EVENTEMITTER_SANE_HPP

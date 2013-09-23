@@ -33,14 +33,14 @@ void runTest(std::function<void()> test, const std::string& str) {
 }
 
 
-typedef ExampleEventProvider<int, int, std::string> ExampleEventProviderImpl;
-typedef ExampleDeferredEventProvider<int, int, std::string> ExampleDeferredEventProviderImpl;
+typedef ExampleEventEmitterTpl<int, int, std::string> ExampleEventEmitterImpl;
+typedef ExampleDeferredEventEmitterTpl<int, int, std::string> ExampleDeferredEventEmitterImpl;
 #ifndef EVENTEMITTER_DISABLE_THREADING
-typedef ExampleThreadedEventProvider<int, int, std::string> ExampleThreadedEventProviderImpl;
+typedef ExampleThreadedEventEmitterTpl<int, int, std::string> ExampleThreadedEventEmitterImpl;
 #endif
-typedef ExampleEventDispatcher<ExampleEventProvider, std::string, int, int, std::string> ExampleEventDispatcherImpl;
+typedef ExampleEventDispatcherTpl<ExampleEventEmitterTpl, std::string, int, int, std::string> ExampleEventDispatcherImpl;
 
-typedef ExampleEventDispatcher<ExampleDeferredEventProvider, std::string, int, int, std::string> ExampleDeferredEventDispatcherImpl;
+typedef ExampleEventDispatcherTpl<ExampleDeferredEventEmitterTpl, std::string, int, int, std::string> ExampleDeferredEventDispatcherImpl;
 
 
 int main()
@@ -48,7 +48,7 @@ int main()
 	
 	runTest([] {
 		int counter1 = 0, counter2 = 0;
-		ExampleEventProviderImpl test;
+		ExampleEventEmitterImpl test;
 		test.onExample([&counter1](int a, int b, std::string str) {
 			counter1 += a + b;
 		});
@@ -66,10 +66,10 @@ int main()
 		assert(counter1 == 16, "on: second trigger should fire");
 		assert(counter2 == 6, "once: second trigger should not fire");
 		
-	}, "EventProvider - on, once, trigger");
+	}, "EventEmitter - on, once, trigger");
 	
 	runTest([] {
-		ExampleEventProviderImpl test;
+		ExampleEventEmitterImpl test;
 		int sum = 0;
 		auto lambda = [&](int a, int b, std::string str) {
 			sum += a + b;
@@ -86,11 +86,11 @@ int main()
 		test.removeExampleHandler(handler);
 		test.triggerExample(11, 13, "B");
 		assert(sum == 16, "removeExampleHandler: once handler should have been removed");			
-	}, "EventProvider - removeHandler");
+	}, "EventEmitter - removeHandler");
 	
 	
 	runTest([] {
-		ExampleEventProviderImpl test;
+		ExampleEventEmitterImpl test;
 		int sum = 0;
 		auto lambda = [&](int a, int b, std::string str) {
 			sum += a + b;
@@ -103,25 +103,25 @@ int main()
 		assert(sum == 32, "multiple handlers should have been added");
 		test.removeAllExampleHandlers();
 		assert(sum == 32, "all handlers should have been removed");
-	}, "EventProvider - removeAllHandlers");
+	}, "EventEmitter - removeAllHandlers");
 	
 	
 	// TODO: make this work!!
 	// 		runTest([] {
-	// 			ExampleEventProvider test;
+	// 			ExampleEventEmitter test;
 	// 			
 	// 			int sum = 0;
-	// 			ExampleEventProvider::HandlerPtr ptr =  test.onExample([&](int a, int b, std::string str) {
+	// 			ExampleEventEmitter::HandlerPtr ptr =  test.onExample([&](int a, int b, std::string str) {
 	// 				sum += a;
 	// 				test.removeExampleHandler(ptr);
 	// 			});
 	// 			test.triggerExample(11, 13, "B");
 	// 			assert(sum == 11, "removeExampleHandler: third trigger should not run");
 	// 			assert(sum == 16, "removeExampleHandler: once handler should have been removed");			
-	// 		}, "EventProvider - removeHandler from within self");
+	// 		}, "EventEmitter - removeHandler from within self");
 	runTest([] {
 		int counter1 = 0, counter2 = 0;
-		ExampleDeferredEventProviderImpl test;
+		ExampleDeferredEventEmitterImpl test;
 		test.onExample([&counter1](int a, int b, std::string str) {
 			counter1 += a + b;
 		});
@@ -148,7 +148,7 @@ int main()
 		test.runAllDeferred();
 		assert(counter1 == 16, "removeAllHandlers should have removed handler");
 		
-	}, "EventDeferredProvider - on, once, trigger, removeAllHandlers");
+	}, "EventDeferredEmitter - on, once, trigger, removeAllHandlers");
 	
 	runTest([]{
 		ExampleEventDispatcherImpl dispatcher;
@@ -187,7 +187,7 @@ int main()
 	
 #ifndef	EVENTEMITTER_DISABLE_THREADING
 	runTest([]{
-		ExampleThreadedEventProviderImpl test;
+		ExampleThreadedEventEmitterImpl test;
 		auto future = test.futureOnceExample();
 		test.triggerExample(213, 999, "B");
 		auto t = future.get();
@@ -195,14 +195,14 @@ int main()
 		assert(std::get<1>(t) == 999, "Should got 2nd argument");
 		assert(std::get<2>(t) == "B", "Should got 3rd argument");
 			
-	}, "EventThreadedProvider - futureOnce");
+	}, "EventThreadedEmitter - futureOnce");
 	
 	
 	int runs1 = 0, runs2 = 0, runs3 = 0;
 	
 	
 	runTest([]{
-		ExampleThreadedEventProviderImpl test;
+		ExampleThreadedEventEmitterImpl test;
 		auto f = std::async(std::launch::async, [=,&test]() {
 			std::this_thread::sleep_for(std::chrono::milliseconds(100));
 			test.triggerExample(10, 20, "ASYNC");
@@ -218,10 +218,10 @@ int main()
 		});
 		assert(id != std::this_thread::get_id(), "Should have run in another thread");
 		assert(ares == 10 && bres == 20 && strres == "ASYNC", "All values should match");
-	}, "EventThreadedProvider - wait for trigger in std::async");
+	}, "EventThreadedEmitter - wait for trigger in std::async");
 		
 	runTest([]{
-		ExampleThreadedEventProviderImpl test;
+		ExampleThreadedEventEmitterImpl test;
 		auto f = std::async(std::launch::async, [=,&test]() {
 			std::this_thread::sleep_for(std::chrono::milliseconds(100));
 			test.triggerExample(10, 20, "ASYNC");
@@ -231,10 +231,10 @@ int main()
 			result = true;
 		}, std::chrono::milliseconds(50));
 		assert(result == false && status == false, "Should have timed out");
-	}, "EventThreadedProvider - wait for trigger in std::async with timeout");
+	}, "EventThreadedEmitter - wait for trigger in std::async with timeout");
 	
 	runTest([]{
-		ExampleThreadedEventProviderImpl test;
+		ExampleThreadedEventEmitterImpl test;
 		bool async = false;
 		std::thread::id id;
 		test.asyncOnceExample([&](int, int, std::string str) {
@@ -246,7 +246,7 @@ int main()
 		test.runAllDeferred();
 		while(!async) {}
 		assert(id != std::this_thread::get_id(), "async properly run");
-	}, "EventThreadedProvider - asyncOnce and defer");
+	}, "EventThreadedEmitter - asyncOnce and defer");
 	
 #endif
 	
