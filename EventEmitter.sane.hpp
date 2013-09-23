@@ -28,6 +28,26 @@
 #define __EVENTEMITTER_NONMACRO_DEFS
 namespace EE {
 	
+	template <typename T, typename... Args>
+	std::unique_ptr<T> make_unique_helper(std::false_type, Args&&... args) {
+		return std::unique_ptr<T>(new T(std::forward<Args>(args)...));
+	}
+
+	template <typename T, typename... Args>
+	std::unique_ptr<T> make_unique_helper(std::true_type, Args&&... args) {
+		static_assert(std::extent<T>::value == 0,
+									"make_unique<T[N]>() is forbidden, please use make_unique<T[]>().");
+		
+		typedef typename std::remove_extent<T>::type U;
+		return std::unique_ptr<T>(new U[sizeof...(Args)]{std::forward<Args>(args)...});
+	}
+	
+	template <typename T, typename... Args>
+	std::unique_ptr<T> make_unique(Args&&... args) {
+		return make_unique_helper<T>(std::is_array<T>(), std::forward<Args>(args)...);
+	}
+	
+	
 	class DeferredBase {
 		// TODO: disable mutex when EVENTEMITTER_DISABLE_THREADING
 	protected: 
@@ -179,7 +199,8 @@ template<typename... Rest>
 class ExampleEventEmitterTpl {
 public:
 	typedef std::function<void(Rest...)> Handler;
-	typedef std::shared_ptr<Handler> HandlerPtr;
+	typedef std::unique_ptr<Handler> HandlerPtr;
+	typedef Handler* Handle;
 private:
  	struct EventHandlersSet : public __EVENTEMITTER_CONTAINER {
 		EventHandlersSet() : eraseLast(false) {}
@@ -187,19 +208,19 @@ private:
  	};
 	EventHandlersSet* eventHandlers = nullptr;
 public:
-	HandlerPtr onExample (Handler handler) {
+	Handle onExample (Handler handler) {
 	  if(!eventHandlers)
 			eventHandlers = new EventHandlersSet;
-		eventHandlers->emplace_front(std::make_shared<Handler>(handler));
-		return eventHandlers->front();
+		eventHandlers->emplace_front(EE::make_unique<Handler>(handler));
+		return eventHandlers->front().get();
 	}
-	HandlerPtr onceExample (Handler handler) {
+	Handle onceExample (Handler handler) {
 	  if(!eventHandlers)
 			eventHandlers = new EventHandlersSet;
-		eventHandlers->emplace_front( std::make_shared<Handler>(EE::wrapLambdaWithCallback(handler, [=]() {
+		eventHandlers->emplace_front( EE::make_unique<Handler>(EE::wrapLambdaWithCallback(handler, [=]() {
 			eventHandlers->eraseLast = true;
 		})));
-		return eventHandlers->front();
+		return eventHandlers->front().get();
 	}
 	template<typename... Args> inline void emitExample (Args&&... fargs) {
 		triggerExample(fargs...);
@@ -221,17 +242,17 @@ public:
 			}
 		}
 	}
-	HandlerPtr removeExampleHandler (HandlerPtr handlerPtr) {
+	bool removeExampleHandler (Handle handlerPtr) {
  	  if(eventHandlers) { 			
  			auto prev = eventHandlers->before_begin(); 
 			for(auto i = eventHandlers->begin();i != eventHandlers->end();++i,++prev) { 
-				if((i)->get() == handlerPtr.get()) {
+				if((i)->get() == handlerPtr) {
 					eventHandlers->erase_after(prev);
-					return handlerPtr;
+					return true;
 				}
 			}
  		}
- 		return HandlerPtr();
+ 		return false;
 	}
 	void removeAllExampleHandlers () {
 		if(eventHandlers)
@@ -270,6 +291,7 @@ class ExampleThreadedEventEmitterTpl : public ExampleEventEmitterTpl<Rest...>, p
 
 	typedef typename ExampleEventEmitterTpl<Rest...>::Handler Handler;
 	typedef typename ExampleEventEmitterTpl<Rest...>::HandlerPtr HandlerPtr;
+	typedef typename ExampleEventEmitterTpl<Rest...>::Handle Handle;
 	
 public:
 	ExampleThreadedEventEmitterTpl() {
@@ -281,7 +303,7 @@ public:
  	bool waitExample (Handler handler, std::chrono::milliseconds duration = std::chrono::milliseconds::max()) {
 		std::shared_ptr<std::atomic<bool>> finished = std::make_shared<std::atomic<bool>>();
 		std::unique_lock<std::mutex> lk(m);
-		HandlerPtr ptr = onceExample(
+		Handle ptr = onceExample(
 			EE::wrapLambdaWithCallback(handler, [=]() {
 				finished->store(true);
 				this->condition.notify_all();
@@ -308,18 +330,18 @@ public:
 		});
 	}
 	
-	HandlerPtr onExample (Handler handler) {
+	Handle onExample (Handler handler) {
 		std::lock_guard<std::mutex> guard(mutex);
 		return ExampleEventEmitterTpl<Rest...>::onExample(handler);
 	}
-	HandlerPtr onceExample (Handler handler) {
+	Handle onceExample (Handler handler) {
 		std::lock_guard<std::mutex> guard(mutex);
 		return ExampleEventEmitterTpl<Rest...>::onceExample(handler);
 	}
-	HandlerPtr asyncOnExample (Handler handler) {
+	Handle asyncOnExample (Handler handler) {
 		return onExample(EE::wrapLambdaInAsync(handler));
 	}
-	HandlerPtr asyncOnceExample (Handler handler) {
+	Handle asyncOnceExample (Handler handler) {
 		return onceExample(EE::wrapLambdaInAsync(handler));
 	}
 	auto futureOnceExample() -> decltype(std::future<std::tuple<Rest...>>()) {
@@ -361,6 +383,7 @@ template<template<typename...> class EventDispatcherBase, typename T, typename..
 class ExampleEventDispatcherTpl : public EventDispatcherBase<T, Rest...> {
  	typedef typename EventDispatcherBase<Rest...>::HandlerPtr HandlerPtr;
 	typedef typename EventDispatcherBase<Rest...>::Handler Handler;
+	typedef typename EventDispatcherBase<Rest...>::Handle Handle;
 	std::multimap<T, HandlerPtr> map;
 	bool eraseLast = false;
 public:
@@ -379,25 +402,26 @@ public:
  			}
 		});
 	}
- 	HandlerPtr onExample (T eventName, Handler handler) {
-		return map.insert(std::pair<T, HandlerPtr>(eventName,  std::make_shared<Handler>(handler)))->second;
+ 	Handle onExample (T eventName, Handler handler) {
+		return map.insert(std::pair<T, HandlerPtr>(eventName,  EE::make_unique<Handler>(handler)))->second.get();
  	}
- 	HandlerPtr onceExample (T eventName, Handler handler) {
-		return map.insert(std::pair<T, HandlerPtr>(eventName,  std::make_shared<Handler>(
+ 	Handle onceExample (T eventName, Handler handler) {
+		return map.insert(std::pair<T, HandlerPtr>(eventName,  EE::make_unique<Handler>(
 			EE::wrapLambdaWithCallback(handler, [&] {
 				eraseLast = true;
-			}))))->second;
+			}))))->second.get();
  	}
- 	HandlerPtr removeExampleHandler (T eventName, HandlerPtr handler) {
+ 	bool removeExampleHandler (T eventName, Handle handler) {
 		auto ret = map.equal_range(eventName);
 		for(auto it = ret.first;it != ret.second;) {
-			if(it->second.get() == handler.get()) {
+			if(it->second.get() == handler) {
 				it = map.erase(it);
-				return handler;
+				return true;
 			}
 		}
+		return false;
 	}
-	void removeAllExampleHandlers (T eventName, HandlerPtr) {
+	void removeAllExampleHandlers (T eventName) {
 		auto ret = map.equal_range(eventName);
 		for(auto it = ret.first;it != ret.second;) {		
 			it = map.erase(it);
