@@ -201,6 +201,9 @@ public: \
 		}))); \
 		return eventHandlers->front(); \
 	} \
+	template<typename... Args> inline void __EVENTEMITTER_CONCAT(emit,name) (Args&&... fargs) { \
+		__EVENTEMITTER_CONCAT(trigger,name)(fargs...); \
+	} \
 	template<typename... Args> inline void __EVENTEMITTER_CONCAT(trigger,name) (Args&&... fargs) { \
 	  if(!eventHandlers) \
 			return; \
@@ -245,6 +248,10 @@ public: \
 template<typename... Rest> \
 class __EVENTEMITTER_CONCAT(frontname,DeferredEventEmitterTpl) : public __EVENTEMITTER_CONCAT(frontname,EventEmitterTpl)<Rest...>, public virtual EE::DeferredBase { \
 public: \
+ \
+	template<typename... Args> inline void __EVENTEMITTER_CONCAT(emit,name) (Args&&... fargs) { \
+		__EVENTEMITTER_CONCAT(trigger,name)(fargs...); \
+	} \
 	template<typename... Args> void __EVENTEMITTER_CONCAT(trigger,name) (Args&&... fargs) { \
 		runDeferred( \
 			std::bind([=](Args... as) { \
@@ -323,6 +330,9 @@ public: \
 		__EVENTEMITTER_CONCAT(once,name)(EE::getLambdaForFuture(promise)); \
 		return future; \
 	} \
+	template<typename... Args> inline void __EVENTEMITTER_CONCAT(emit,name) (Args&&... fargs) { \
+		__EVENTEMITTER_CONCAT(trigger,name)(fargs...); \
+	} \
 	template<typename... Args> void __EVENTEMITTER_CONCAT(trigger,name) (Args&&... fargs) {  \
 		std::lock_guard<std::mutex> guard(mutex); \
 		__EVENTEMITTER_CONCAT(frontname,EventEmitterTpl)<Rest...>::__EVENTEMITTER_CONCAT(trigger,name)(fargs...); \
@@ -355,12 +365,12 @@ class __EVENTEMITTER_CONCAT(frontname,EventDispatcherTpl) : public EventDispatch
 	bool eraseLast = false; \
 public: \
 	__EVENTEMITTER_CONCAT(frontname,EventDispatcherTpl)() { \
-		__EVENTEMITTER_CONCAT(frontname,EventEmitter)<T, Rest...>::__EVENTEMITTER_CONCAT(on,name)([&](T first, Rest... fargs) { \
- 			auto ret = map.equal_range(first); \
+		__EVENTEMITTER_CONCAT(frontname,EventEmitter)<T, Rest...>::__EVENTEMITTER_CONCAT(on,name)([&](T eventName, Rest... fargs) { \
+ 			auto ret = map.equal_range(eventName); \
  			for(auto it = ret.first;it != ret.second;) { \
  				(*(it->second))(fargs...); \
 				if(eraseLast) { \
-					map.erase(it); \
+					it = map.erase(it); \
 					eraseLast = false; \
 				} \
 				else { \
@@ -369,20 +379,29 @@ public: \
  			} \
 		}); \
 	} \
- 	HandlerPtr __EVENTEMITTER_CONCAT(on,name) (T first, Handler handler) { \
-		return map.insert(std::pair<T, HandlerPtr>(first,  std::make_shared<Handler>(handler)))->second; \
+ 	HandlerPtr __EVENTEMITTER_CONCAT(on,name) (T eventName, Handler handler) { \
+		return map.insert(std::pair<T, HandlerPtr>(eventName,  std::make_shared<Handler>(handler)))->second; \
  	} \
- 	HandlerPtr __EVENTEMITTER_CONCAT(once,name) (T first, Handler handler) { \
-		return map.insert(std::pair<T, HandlerPtr>(first,  std::make_shared<Handler>( \
-			wrapLambdaWithCallback(handler, [&] { \
+ 	HandlerPtr __EVENTEMITTER_CONCAT(once,name) (T eventName, Handler handler) { \
+		return map.insert(std::pair<T, HandlerPtr>(eventName,  std::make_shared<Handler>( \
+			EE::wrapLambdaWithCallback(handler, [&] { \
 				eraseLast = true; \
 			}))))->second; \
  	} \
- 	HandlerPtr __EVENTEMITTER_CONCAT(remove,__EVENTEMITTER_CONCAT(name, Handler)) (T first, Handler handler) { \
-		  \
+ 	HandlerPtr __EVENTEMITTER_CONCAT(remove,__EVENTEMITTER_CONCAT(name, Handler)) (T eventName, HandlerPtr handler) { \
+		auto ret = map.equal_range(eventName); \
+		for(auto it = ret.first;it != ret.second;) { \
+			if(it->second.get() == handler.get()) { \
+				it = map.erase(it); \
+				return handler; \
+			} \
+		} \
 	} \
-	HandlerPtr __EVENTEMITTER_CONCAT(removeAll,__EVENTEMITTER_CONCAT(name, Handlers)) (T first, Handler handler) { \
-		  \
+	void __EVENTEMITTER_CONCAT(removeAll,__EVENTEMITTER_CONCAT(name, Handlers)) (T eventName, HandlerPtr) { \
+		auto ret = map.equal_range(eventName); \
+		for(auto it = ret.first;it != ret.second;) {		 \
+			it = map.erase(it); \
+		} \
 	} \
  };  
 

@@ -45,7 +45,6 @@ typedef ExampleEventDispatcherTpl<ExampleDeferredEventEmitterTpl, std::string, i
 
 int main()
 {
-	
 	runTest([] {
 		int counter1 = 0, counter2 = 0;
 		ExampleEventEmitterImpl test;
@@ -152,13 +151,28 @@ int main()
 	
 	runTest([]{
 		ExampleEventDispatcherImpl dispatcher;
-		dispatcher.onExample("test", [=](int a, int b, std::string str) {
+		int sum = 0;
+		auto handler = dispatcher.onExample("test", [&](int a, int b, std::string str) {
+			sum += a + b;
 			assert(a == 12 && b == 14 && str == "TEST", "should have been properly dispatched");
 		});
 		dispatcher.onExample("test2", [=](int a, int b, std::string str) {
 			assert(false, "should not run");
 		});
+		int count = 0;
+		dispatcher.onceExample("test3", [&](int a, int b, std::string str) {
+			count++;
+		});
+		
 		dispatcher.triggerExample("test", 12, 14, "TEST");
+		dispatcher.removeExampleHandler("test", handler);
+		dispatcher.triggerExample("test", 12, 14, "TEST");
+		assert(sum == 26, "second trigger should do nothing");
+
+		dispatcher.triggerExample("test3", 1, 1, "TEST");
+		dispatcher.triggerExample("test3", 1, 1, "TEST");
+		dispatcher.triggerExample("test3", 1, 1, "TEST");
+		assert(count == 1, "should run only once");
 		
 	}, "EventDispatcher - on, trigger");
 

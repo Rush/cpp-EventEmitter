@@ -201,6 +201,9 @@ public:
 		})));
 		return eventHandlers->front();
 	}
+	template<typename... Args> inline void emitExample (Args&&... fargs) {
+		triggerExample(fargs...);
+	}
 	template<typename... Args> inline void triggerExample (Args&&... fargs) {
 	  if(!eventHandlers)
 			return;
@@ -245,6 +248,10 @@ public:
 template<typename... Rest>
 class ExampleDeferredEventEmitterTpl : public ExampleEventEmitterTpl<Rest...>, public virtual EE::DeferredBase {
 public:
+
+	template<typename... Args> inline void emitExample (Args&&... fargs) {
+		triggerExample(fargs...);
+	}
 	template<typename... Args> void triggerExample (Args&&... fargs) {
 		runDeferred(
 			std::bind([=](Args... as) {
@@ -323,6 +330,9 @@ public:
 		onceExample(EE::getLambdaForFuture(promise));
 		return future;
 	}
+	template<typename... Args> inline void emitExample (Args&&... fargs) {
+		triggerExample(fargs...);
+	}
 	template<typename... Args> void triggerExample (Args&&... fargs) { 
 		std::lock_guard<std::mutex> guard(mutex);
 		ExampleEventEmitterTpl<Rest...>::triggerExample(fargs...);
@@ -355,12 +365,12 @@ class ExampleEventDispatcherTpl : public EventDispatcherBase<T, Rest...> {
 	bool eraseLast = false;
 public:
 	ExampleEventDispatcherTpl() {
-		ExampleEventEmitter<T, Rest...>::onExample([&](T first, Rest... fargs) {
- 			auto ret = map.equal_range(first);
+		ExampleEventEmitter<T, Rest...>::onExample([&](T eventName, Rest... fargs) {
+ 			auto ret = map.equal_range(eventName);
  			for(auto it = ret.first;it != ret.second;) {
  				(*(it->second))(fargs...);
 				if(eraseLast) {
-					map.erase(it);
+					it = map.erase(it);
 					eraseLast = false;
 				}
 				else {
@@ -369,20 +379,29 @@ public:
  			}
 		});
 	}
- 	HandlerPtr onExample (T first, Handler handler) {
-		return map.insert(std::pair<T, HandlerPtr>(first,  std::make_shared<Handler>(handler)))->second;
+ 	HandlerPtr onExample (T eventName, Handler handler) {
+		return map.insert(std::pair<T, HandlerPtr>(eventName,  std::make_shared<Handler>(handler)))->second;
  	}
- 	HandlerPtr onceExample (T first, Handler handler) {
-		return map.insert(std::pair<T, HandlerPtr>(first,  std::make_shared<Handler>(
-			wrapLambdaWithCallback(handler, [&] {
+ 	HandlerPtr onceExample (T eventName, Handler handler) {
+		return map.insert(std::pair<T, HandlerPtr>(eventName,  std::make_shared<Handler>(
+			EE::wrapLambdaWithCallback(handler, [&] {
 				eraseLast = true;
 			}))))->second;
  	}
- 	HandlerPtr removeExampleHandler (T first, Handler handler) {
-		// TODO
+ 	HandlerPtr removeExampleHandler (T eventName, HandlerPtr handler) {
+		auto ret = map.equal_range(eventName);
+		for(auto it = ret.first;it != ret.second;) {
+			if(it->second.get() == handler.get()) {
+				it = map.erase(it);
+				return handler;
+			}
+		}
 	}
-	HandlerPtr removeAllExampleHandlers (T first, Handler handler) {
-		// TODO
+	void removeAllExampleHandlers (T eventName, HandlerPtr) {
+		auto ret = map.equal_range(eventName);
+		for(auto it = ret.first;it != ret.second;) {		
+			it = map.erase(it);
+		}
 	}
  }; //_//
 
