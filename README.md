@@ -3,7 +3,7 @@ cpp-EventEmitter
 
 Attach lightweight C++11 event emitting and handling capabilities to your existing C++ classes.
 
-* Compatible with GCC 4.7 and Visual Studio 2013 (tested with RC).
+* Compatible with GCC 4.7 and newer, Visual Studio 2013 (tested with RC) and Clang++ (with some multi-threading issues)
 * Single header file that you can copy to your codebase
 * Attach event handlers with lambda functions and construct very readable, elegant and concise code.
 * Define new emitters with a `DefineEventEmitter` macro to use methods such as `emitChatMessage`, `onChatMessage` or use `EventEmitter<Args>` template to define an event emitting member with methods `on`, `trigger`.
