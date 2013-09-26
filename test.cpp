@@ -25,9 +25,9 @@ inline void Assert(A assertion, const char* msg = "")
 void runTest(std::function<void()> test, const std::string& str) {
 	try {
 		test();
-		std::cout << "[ OK ] " << str << "\n";
+		std::cout << "[ OK ] " << str.c_str() << "\n";
 	} catch(test_exception exception) {
-		std::cout << "[Fail] " << str << "\n";
+		std::cout << "[Fail] " << str.c_str() << "\n";
 		std::cerr << "===========\n" << exception.what() << "\n===========\n";
 	}
 }
@@ -148,7 +148,7 @@ int main()
 		assert(counter1 == 16, "removeAllHandlers should have removed handler");
 		
 	}, "EventDeferredEmitter - on, once, trigger, removeAllHandlers");
-	
+		
 	runTest([]{
 		ExampleEventDispatcherImpl dispatcher;
 		int sum = 0;
@@ -200,6 +200,19 @@ int main()
 	}, "EventDeferredDispatcher - on, trigger, runDeferred");
 	
 #ifndef	EVENTEMITTER_DISABLE_THREADING
+	runTest([] {
+		auto test = std::make_shared<ExampleDeferredEventEmitterImpl>();
+		
+		std::thread([=]() {
+			test->triggerExample(1, 5, "A");
+		}).join();
+		
+		test->onExample([=](int a, int b, std::string str) {
+			assert(a == 1 && b == 5 && str == "A");
+		});
+		test->runAllDeferred();
+	}, "EventDeferredEmitter - trigger from thread");
+	
 	runTest([]{
 		ExampleThreadedEventEmitterImpl test;
 		auto future = test.futureOnceExample();
@@ -210,9 +223,6 @@ int main()
 		assert(std::get<2>(t) == "B", "Should got 3rd argument");
 			
 	}, "EventThreadedEmitter - futureOnce");
-	
-	
-	int runs1 = 0, runs2 = 0, runs3 = 0;
 	
 	
 	runTest([]{

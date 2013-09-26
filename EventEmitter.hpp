@@ -21,6 +21,12 @@
 #include <future>
 #endif
 
+#if defined(__GCC__)
+#define __EVENTEMITTER_GCC_WORKAROUND this->
+#else
+#define __EVENTEMITTER_GCC_WORKAROUND
+#endif
+
 #define __EVENTEMITTER_CONCAT_IMPL(x, y) x ## y
 #define __EVENTEMITTER_CONCAT(x, y) __EVENTEMITTER_CONCAT_IMPL(x, y)
 
@@ -222,6 +228,16 @@ public: \
 		}))); \
 		return eventHandlers->front().get(); \
 	} \
+	bool __EVENTEMITTER_CONCAT(has,__EVENTEMITTER_CONCAT(name, Handlers))() { \
+		return eventHandlers?!eventHandlers->empty():false; \
+	} \
+	int __EVENTEMITTER_CONCAT(count,__EVENTEMITTER_CONCAT(name, Handlers))() { \
+		if(!eventHandlers) \
+			return 0; \
+		int count = 0; \
+		for(auto i:eventHandlers) count++; \
+		return count; \
+	} \
 	template<typename... Args> inline void __EVENTEMITTER_CONCAT(emit,name) (Args&&... fargs) { \
 		__EVENTEMITTER_CONCAT(trigger,name)(fargs...); \
 	} \
@@ -273,12 +289,18 @@ public: \
 	template<typename... Args> inline void __EVENTEMITTER_CONCAT(emit,name) (Args&&... fargs) { \
 		__EVENTEMITTER_CONCAT(trigger,name)(fargs...); \
 	} \
-	template<typename... Args> void __EVENTEMITTER_CONCAT(trigger,name) (Args&&... fargs) { \
+	template<typename... Args> void __EVENTEMITTER_CONCAT(trigger,__EVENTEMITTER_CONCAT(name, ByRef)) (Args&&... fargs) { \
 		runDeferred( \
 			std::bind([=](Args... as) { \
-			this->__EVENTEMITTER_CONCAT(frontname,EventEmitterTpl)<Rest...>::__EVENTEMITTER_CONCAT(trigger,name)(as...); \
+			__EVENTEMITTER_GCC_WORKAROUND __EVENTEMITTER_CONCAT(frontname,EventEmitterTpl)<Rest...>::__EVENTEMITTER_CONCAT(trigger,name)(as...); \
 			}, EE::forward_as_ref<Args>(fargs)...)); \
 	} \
+	template<typename... Args> void __EVENTEMITTER_CONCAT(trigger,name) (Args... fargs) { \
+		runDeferred( \
+			std::bind([=](Args... as) { \
+			__EVENTEMITTER_GCC_WORKAROUND __EVENTEMITTER_CONCAT(frontname,EventEmitterTpl)<Rest...>::__EVENTEMITTER_CONCAT(trigger,name)(as...); \
+			}, fargs...)); \
+	}	 \
 };  
 
 #ifndef EVENTEMITTER_DISABLE_THREADING
@@ -360,13 +382,21 @@ public: \
 		__EVENTEMITTER_CONCAT(frontname,EventEmitterTpl)<Rest...>::__EVENTEMITTER_CONCAT(trigger,name)(fargs...); \
 		condition.notify_all(); \
 	} \
-	template<typename... Args> void __EVENTEMITTER_CONCAT(defer,name) (Args&&... fargs) {  \
+	template<typename... Args> void __EVENTEMITTER_CONCAT(defer,__EVENTEMITTER_CONCAT(name, ByRef)) (Args&&... fargs) {  \
 		runDeferred( \
  			std::bind([=](Args... as) { \
- 			  \
- 			this->__EVENTEMITTER_CONCAT(frontname,EventEmitterTpl)<Rest...>::__EVENTEMITTER_CONCAT(trigger,name)(as...); \
+ 			__EVENTEMITTER_GCC_WORKAROUND __EVENTEMITTER_CONCAT(frontname,EventEmitterTpl)<Rest...>::__EVENTEMITTER_CONCAT(trigger,name)(as...); \
  			}, \
 			EE::forward_as_ref<Args>(fargs)...			 \
+			  \
+			)); \
+	} \
+	template<typename... Args> void __EVENTEMITTER_CONCAT(defer,name) (Args... fargs) {  \
+		runDeferred( \
+ 			std::bind([=](Args... as) { \
+ 			__EVENTEMITTER_GCC_WORKAROUND __EVENTEMITTER_CONCAT(frontname,EventEmitterTpl)<Rest...>::__EVENTEMITTER_CONCAT(trigger,name)(as...); \
+ 			}, \
+			fargs...			 \
 			  \
 			)); \
 	} \
@@ -402,6 +432,17 @@ public: \
  			} \
 		}); \
 	} \
+	bool __EVENTEMITTER_CONCAT(has,__EVENTEMITTER_CONCAT(name, Handlers))(T eventName) { \
+		return map.find(eventName) != map.end(); \
+	} \
+	int __EVENTEMITTER_CONCAT(count,__EVENTEMITTER_CONCAT(name, Handlers))(T eventName) { \
+		int count = 0; \
+		auto ret = map.equal_range(eventName); \
+		for(auto it = ret.first;it != ret.second;++it) \
+			count++; \
+		return count; \
+	} \
+	 \
  	Handle __EVENTEMITTER_CONCAT(on,name) (T eventName, Handler handler) { \
 		return map.insert(std::pair<T, HandlerPtr>(eventName,  EE::make_unique<Handler>(handler)))->second.get(); \
  	} \

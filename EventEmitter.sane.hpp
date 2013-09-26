@@ -21,6 +21,12 @@
 #include <future>
 #endif
 
+#if defined(__GCC__)
+#define __EVENTEMITTER_GCC_WORKAROUND this->
+#else
+#define __EVENTEMITTER_GCC_WORKAROUND
+#endif
+
 #define __EVENTEMITTER_CONCAT_IMPL(x, y) x ## y
 #define __EVENTEMITTER_CONCAT(x, y) __EVENTEMITTER_CONCAT_IMPL(x, y)
 
@@ -82,7 +88,7 @@ namespace EE {
 				((deferredQueue->front()))();
 				deferredQueue->pop_front();
 			}
-			return deferredQueue->size();
+			return !deferredQueue->empty();
 		}
 		void runAllDeferred() {
 			while(runDeferred());
@@ -222,6 +228,16 @@ public:
 		})));
 		return eventHandlers->front().get();
 	}
+	bool hasExampleHandlers() {
+		return eventHandlers?!eventHandlers->empty():false;
+	}
+	int countExampleHandlers() {
+		if(!eventHandlers)
+			return 0;
+		int count = 0;
+		for(auto i:eventHandlers) count++;
+		return count;
+	}
 	template<typename... Args> inline void emitExample (Args&&... fargs) {
 		triggerExample(fargs...);
 	}
@@ -273,12 +289,18 @@ public:
 	template<typename... Args> inline void emitExample (Args&&... fargs) {
 		triggerExample(fargs...);
 	}
-	template<typename... Args> void triggerExample (Args&&... fargs) {
+	template<typename... Args> void triggerExampleByRef (Args&&... fargs) {
 		runDeferred(
 			std::bind([=](Args... as) {
-			this->ExampleEventEmitterTpl<Rest...>::triggerExample(as...);
+			__EVENTEMITTER_GCC_WORKAROUND ExampleEventEmitterTpl<Rest...>::triggerExample(as...);
 			}, EE::forward_as_ref<Args>(fargs)...));
 	}
+	template<typename... Args> void triggerExample (Args... fargs) {
+		runDeferred(
+			std::bind([=](Args... as) {
+			__EVENTEMITTER_GCC_WORKAROUND ExampleEventEmitterTpl<Rest...>::triggerExample(as...);
+			}, fargs...));
+	}	
 }; //_//
 
 #ifndef EVENTEMITTER_DISABLE_THREADING
@@ -360,13 +382,21 @@ public:
 		ExampleEventEmitterTpl<Rest...>::triggerExample(fargs...);
 		condition.notify_all();
 	}
-	template<typename... Args> void deferExample (Args&&... fargs) { 
+	template<typename... Args> void deferExampleByRef (Args&&... fargs) { 
 		runDeferred(
  			std::bind([=](Args... as) {
- 			// NOTE: with this it does not fail!!! without this it fails
- 			this->ExampleEventEmitterTpl<Rest...>::triggerExample(as...);
+ 			__EVENTEMITTER_GCC_WORKAROUND ExampleEventEmitterTpl<Rest...>::triggerExample(as...);
  			},
 			EE::forward_as_ref<Args>(fargs)...			
+			//fargs...
+			));
+	}
+	template<typename... Args> void deferExample (Args... fargs) { 
+		runDeferred(
+ 			std::bind([=](Args... as) {
+ 			__EVENTEMITTER_GCC_WORKAROUND ExampleEventEmitterTpl<Rest...>::triggerExample(as...);
+ 			},
+			fargs...			
 			//fargs...
 			));
 	}
@@ -402,6 +432,17 @@ public:
  			}
 		});
 	}
+	bool hasExampleHandlers(T eventName) {
+		return map.find(eventName) != map.end();
+	}
+	int countExampleHandlers(T eventName) {
+		int count = 0;
+		auto ret = map.equal_range(eventName);
+		for(auto it = ret.first;it != ret.second;++it)
+			count++;
+		return count;
+	}
+	
  	Handle onExample (T eventName, Handler handler) {
 		return map.insert(std::pair<T, HandlerPtr>(eventName,  EE::make_unique<Handler>(handler)))->second.get();
  	}
