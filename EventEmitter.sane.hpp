@@ -14,14 +14,19 @@
 #include <memory>
 #include <deque>
 
-
-#include <mutex>
 #ifndef EVENTEMITTER_DISABLE_THREADING
 #include <condition_variable>
 #include <future>
+#include <mutex>
+
+#define __EVENTEMITTER_MUTEX_DECLARE(mutex) std::mutex mutex;
+#define __EVENTEMITTER_LOCK_GUARD(mutex) std::lock_guard<std::mutex> guard(mutex);
+#else
+#define __EVENTEMITTER_MUTEX_DECLARE(mutex);
+#define __EVENTEMITTER_LOCK_GUARD(mutex);
 #endif
 
-#if defined(__GCC__)
+#if defined(__GNUC__)
 #define __EVENTEMITTER_GCC_WORKAROUND this->
 #else
 #define __EVENTEMITTER_GCC_WORKAROUND
@@ -58,31 +63,38 @@ namespace EE {
 		// TODO: disable mutex when EVENTEMITTER_DISABLE_THREADING
 	protected: 
 		typedef std::function<void ()> DeferredHandler;
+		std::forward_list<DeferredHandler> removeHandlers;
 		std::deque<DeferredHandler>* deferredQueue = nullptr;
-		std::mutex mutex;
+		__EVENTEMITTER_MUTEX_DECLARE(mutex);
 		inline void assureContainer() {
 			if(!deferredQueue)
 				deferredQueue = new std::deque<DeferredHandler>();
 		}
 	protected:
 		virtual ~DeferredBase() {
-			std::lock_guard<std::mutex> guard(mutex);
+			__EVENTEMITTER_LOCK_GUARD(mutex);
 			if(deferredQueue)
 				delete deferredQueue;
 		}
 		void runDeferred(DeferredHandler f) {
-			std::lock_guard<std::mutex> guard(mutex);
+			__EVENTEMITTER_LOCK_GUARD(mutex);
 			assureContainer();
 			deferredQueue->push_back(f);
 		}
 	public:
+		void removeAllHandlers() {
+			for(auto& handler : removeHandlers) {
+				handler();
+			}
+		}
+
 		void clearDeferred() {
-			std::lock_guard<std::mutex> guard(mutex);
+			__EVENTEMITTER_LOCK_GUARD(mutex);
 			assureContainer();
 			deferredQueue->clear();
 		}
 		bool runDeferred() {
-			std::lock_guard<std::mutex> guard(mutex);
+			__EVENTEMITTER_LOCK_GUARD(mutex);
 			assureContainer();
 			if(deferredQueue->size()) {
 				((deferredQueue->front()))();
@@ -209,7 +221,8 @@ public:
 	typedef Handler* Handle;
 private:
  	struct EventHandlersSet : public __EVENTEMITTER_CONTAINER {
-		EventHandlersSet() : eraseLast(false) {}
+		EventHandlersSet() : eraseLast(false) {
+		}
  		bool eraseLast : 8;
  	};
 	EventHandlersSet* eventHandlers = nullptr;
@@ -235,7 +248,7 @@ public:
 		if(!eventHandlers)
 			return 0;
 		int count = 0;
-		for(auto i:eventHandlers) count++;
+		for(auto& i:eventHandlers) count++;
 		return count;
 	}
 	template<typename... Args> inline void emitExample (Args&&... fargs) {
@@ -285,6 +298,11 @@ public:
 template<typename... Rest>
 class ExampleDeferredEventEmitterTpl : public ExampleEventEmitterTpl<Rest...>, public virtual EE::DeferredBase {
 public:
+	ExampleDeferredEventEmitterTpl() {
+		DeferredBase::removeHandlers.emplace_front([=] {
+			this->removeAllExampleHandlers();
+		});
+	}
 
 	template<typename... Args> inline void emitExample (Args&&... fargs) {
 		triggerExample(fargs...);
@@ -353,11 +371,11 @@ public:
 	}
 	
 	Handle onExample (Handler handler) {
-		std::lock_guard<std::mutex> guard(mutex);
+		__EVENTEMITTER_LOCK_GUARD(mutex);
 		return ExampleEventEmitterTpl<Rest...>::onExample(handler);
 	}
 	Handle onceExample (Handler handler) {
-		std::lock_guard<std::mutex> guard(mutex);
+		__EVENTEMITTER_LOCK_GUARD(mutex);
 		return ExampleEventEmitterTpl<Rest...>::onceExample(handler);
 	}
 	Handle asyncOnExample (Handler handler) {
@@ -378,7 +396,7 @@ public:
 		triggerExample(fargs...);
 	}
 	template<typename... Args> void triggerExample (Args&&... fargs) { 
-		std::lock_guard<std::mutex> guard(mutex);
+		__EVENTEMITTER_LOCK_GUARD(mutex);
 		ExampleEventEmitterTpl<Rest...>::triggerExample(fargs...);
 		condition.notify_all();
 	}
@@ -473,20 +491,25 @@ public:
 
 #if 0 //#//
 
-#define DefineEventEmitter(name, ...) \
+#define DefineEventEmitterAs(name, className, ...) \
 __EVENTEMITTER_PROVIDER(name, name) \
-typedef __EVENTEMITTER_CONCAT(name, EventEmitterTpl)<__VA_ARGS__> __EVENTEMITTER_CONCAT(name, EventEmitter);
+typedef __EVENTEMITTER_CONCAT(name, EventEmitterTpl)<__VA_ARGS__> className;
 
-#define DefineDeferredEventEmitter(name, ...) \
+#define DefineEventEmitter(name, ...) DefineEventEmitterAs(name, __EVENTEMITTER_CONCAT(name, EventEmitter), __VA_ARGS__);
+
+#define DefineDeferredEventEmitterAs(name, className, ...) \
 __EVENTEMITTER_PROVIDER(name,name) \
 __EVENTEMITTER_PROVIDER_DEFERRED(name,name) \
-typedef __EVENTEMITTER_CONCAT(name, DeferredEventEmitterTpl)<__VA_ARGS__> __EVENTEMITTER_CONCAT(name, DeferredEventEmitter);
+typedef __EVENTEMITTER_CONCAT(name, DeferredEventEmitterTpl)<__VA_ARGS__> className;
 
-#define DefineThreadedEventEmitter(name, ...) \
+#define DefineDeferredEventEmitter(name, ...) DefineDeferredEventEmitterAs(name, __EVENTEMITTER_CONCAT(name, DeferredEventEmitter), __VA_ARGS__)
+
+#define DefineThreadedEventEmitterAs(name, className, ...) \
 __EVENTEMITTER_PROVIDER(name,name) \
 __EVENTEMITTER_PROVIDER_THREADED(name,name) \
-typedef __EVENTEMITTER_CONCAT(name, ThreadedEventEmitterTpl)<__VA_ARGS__> __EVENTEMITTER_CONCAT(name, ThreadedEventEmitter);
+typedef __EVENTEMITTER_CONCAT(name, ThreadedEventEmitterTpl)<__VA_ARGS__> className;
 
+#define DefineThreadedEventEmitter(name, ...) __EVENTEMITTER_CONCAT(name, ThreadedEventEmitter), __VA_ARGS__)
 
 __EVENTEMITTER_PROVIDER(/**/,/**/)
 template<typename... Rest> class EventEmitter : public EventEmitterTpl<Rest...> {};

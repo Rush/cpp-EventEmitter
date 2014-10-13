@@ -22,6 +22,7 @@ int main()
 	});
 	w.doubleIntEvent.trigger(123, 213); // signal
 	
+
 	Widget2 w2;
 	
 	w2.onDoubleInt([=](int a, int b) {

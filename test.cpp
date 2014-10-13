@@ -1,3 +1,4 @@
+#define _GLIBCXX_USE_NANOSLEEP
 #include "EventEmitter.sane.hpp"
 
 #include <exception>
