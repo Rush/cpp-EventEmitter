@@ -9,9 +9,7 @@
 
 #include <functional>
 #include <forward_list>
-#include <set>
-#include <unordered_set>
-#include <memory>
+#include <map>
 #include <deque>
 #include <cstring>
 
@@ -40,21 +38,15 @@
 #define __EVENTEMITTER_NONMACRO_DEFS
 namespace EE {
 	class DeferredBase {
-		// TODO: disable mutex when EVENTEMITTER_DISABLE_THREADING
 	protected: 
 		typedef std::function<void ()> DeferredHandler;
 		std::forward_list<DeferredHandler> removeHandlers;
-		std::unique_ptr<std::deque<DeferredHandler>> deferredQueue;
+		std::deque<DeferredHandler> deferredQueue;
 		__EVENTEMITTER_MUTEX_DECLARE(mutex);
-		inline void assureContainer() {
-			if(!deferredQueue)
-				deferredQueue.reset(new std::deque<DeferredHandler>());
-		}
 	protected:
 		void runDeferred(DeferredHandler f) {
 			__EVENTEMITTER_LOCK_GUARD(mutex);
-			assureContainer();
-			deferredQueue->emplace_back(f);
+			deferredQueue.emplace_back(std::move(f));
 		}
 	public:
 		void removeAllHandlers() {
@@ -62,27 +54,24 @@ namespace EE {
 				handler();
 			}
 		}
-
 		void clearDeferred() {
 			__EVENTEMITTER_LOCK_GUARD(mutex);
-			assureContainer();
-			deferredQueue->clear();
+			deferredQueue.clear();
 		}
 		bool runDeferred() {
 			__EVENTEMITTER_LOCK_GUARD(mutex);
-			assureContainer();
-			if(deferredQueue->size()) {
-				((deferredQueue->front()))();
-				deferredQueue->pop_front();
+			if(deferredQueue.size()) {
+				((deferredQueue.front()))();
+				deferredQueue.pop_front();
 			}
-			return !deferredQueue->empty();
+			return !deferredQueue.empty();
 		}
 		void runAllDeferred() {
 			while(runDeferred());
 		}
 	};
 	
-	// reference_wrapper needs to be use instead of std::reference_wrapper
+	// reference_wrapper needs to be used instead of std::reference_wrapper
 	// this is because of VS2013 (RC) bug
 	template<class T> class reference_wrapper
 	{
@@ -113,15 +102,8 @@ template<typename T> typename forward_as_ref_type<T>::type forward_as_ref(
     return t;
  }
 
-	template <typename T>
-	size_t getAddress(const std::function<T>& lambda) {
-		size_t out;
-		memcpy(&out, ((char*)&lambda)+4, sizeof(out));
-		return out;
-  }
-
 template<typename... Args>	
-inline decltype(auto) wrapLambdaWithCallback2(const std::function<void(Args...)>& f, std::function<void()>&& afterCb) {
+inline decltype(auto) wrapLambdaWithCallback(const std::function<void(Args...)>& f, std::function<void()>&& afterCb) {
 	return [=,afterCb=std::move(afterCb)](Args&&... args) {
 		f(args...);
 		afterCb();
@@ -129,23 +111,12 @@ inline decltype(auto) wrapLambdaWithCallback2(const std::function<void(Args...)>
 }
 
 template<typename... Args>	
-inline decltype(auto) wrapLambdaWithCallback2(std::function<void(Args...)>&& f, std::function<void()>&& afterCb) {
+inline decltype(auto) wrapLambdaWithCallback(std::function<void(Args...)>&& f, std::function<void()>&& afterCb) {
 	return [f=std::move(f),afterCb=std::move(afterCb)](Args&&... args) {
 		f(args...);
 		afterCb();
 	};
 }
-	
-// template<class Func, class Func2, class ...Args>
-// inline decltype(auto) funcLambda(Func && func, Args && ...args, Func2&& func2)
-// {   //The error is caused by the lambda below:
-//     auto tpl = make_tuple(std::forward<Args>(args)...);
-// 
-//     return [func, tpl = move(tpl)]() {
-//         apply(func, tpl);
-// 				func2();
-//     };
-// }
 
 #ifndef EVENTEMITTER_DISABLE_THREADING
 	
@@ -198,65 +169,42 @@ template<typename... Rest>
 class ExampleEventEmitterTpl {
 public:
 	typedef std::function<void(Rest...)> Handler;
-	//typedef std::unique_ptr<Handler> HandlerPtr;
 	using Handle = handle_id_type;
 	using HandlerTuple = std::tuple<Handle, Handler>;
 	struct HandlerPtr : public HandlerTuple {
-		HandlerPtr(Handler handler) : HandlerTuple(__handle_counter++, std::move(handler)) {
+		HandlerPtr(Handler handler, bool _specialFlag = false) : HandlerTuple((__handle_counter++) | _specialFlag << 31 , std::move(handler)) {
+			if(__handle_counter & 0x80000000) {
+				__handle_counter = 0;
+			}
 		}
-		bool operator==(const HandlerPtr& other) {
-			return std::get<0>(*this) == std::get<0>(other);
+		bool specialFlag() {
+			return std::get<0>(*this) & 0x80000000;
 		}
 		bool operator==(Handle other) {
 			return std::get<0>(*this) == other;
 		}
-
-		template<typename... Args> inline void operator() (Args&&... fargs) {
-			std::get<1>(*this)(fargs...);
+		template<typename... Args> inline decltype(auto) operator() (Args&&... fargs) {
+			return std::get<1>(*this)(fargs...);
 		}
-		
-		operator Handler() const { return std::get<1>(*this); }
-		operator Handler&() { return std::get<1>(*this); }
-		operator Handler&&() { return std::get<1>(*this); }
 		operator Handle() const { return std::get<0>(*this); }
 	};
 
 private:
- 	struct EventHandlersSet : public __EVENTEMITTER_CONTAINER {
-		EventHandlersSet() : eraseLast(false) {
-		}
- 		bool eraseLast : 8;
- 	};
-	std::unique_ptr<EventHandlersSet> eventHandlers;
+	using EventHandlersSet = __EVENTEMITTER_CONTAINER;
+	EventHandlersSet eventHandlers;
 public:
-	Handle onExample (Handler&& handler) {
-	  if(!eventHandlers)
-			eventHandlers.reset(new EventHandlersSet);
-		eventHandlers->emplace_front(handler);
-		return eventHandlers->front();
+	Handle onExample (Handler handler) {
+		eventHandlers.emplace_front(std::move(handler));
+		return eventHandlers.front();
 	}
-	Handle onceExample (const Handler& handler) {
-	  if(!eventHandlers)
-			eventHandlers.reset(new EventHandlersSet);
-		eventHandlers->emplace_front( EE::wrapLambdaWithCallback2(handler, [=]() {
-			eventHandlers->eraseLast = true;
-		}));
-		return eventHandlers->front();
-	}
-	Handle onceExample (Handler&& handler) {
-	  if(!eventHandlers)
-			eventHandlers.reset(new EventHandlersSet);
-		eventHandlers->emplace_front( EE::wrapLambdaWithCallback2(std::move(handler), [=]() {
-			eventHandlers->eraseLast = true;
-		}));
-		return eventHandlers->front();
+	Handle onceExample (Handler handler) {
+		eventHandlers.emplace_front(std::move(handler), true);
+		return eventHandlers.front();
 	}
 	bool hasExampleHandlers() {
-		return eventHandlers?!eventHandlers->empty():false;
+		return !eventHandlers.empty();
 	}
 	int countExampleHandlers() {
-		if(!eventHandlers)
-			return 0;
 		int count = 0;
 		for(auto& i:eventHandlers) count++;
 		return count;
@@ -265,15 +213,12 @@ public:
 		triggerExample(fargs...);
 	}
 	template<typename... Args> inline void triggerExample (Args&&... fargs) {
-	  if(!eventHandlers)
-			return;
-		auto prev = eventHandlers->before_begin(); 
-	  for(auto i = eventHandlers->begin();i != eventHandlers->end();) {
+		auto prev = eventHandlers.before_begin(); 
+	  for(auto i = eventHandlers.begin();i != eventHandlers.end();) {
 			
 			(*i)(fargs...);
-			if(eventHandlers->eraseLast) {
-				i = eventHandlers->erase_after(prev);
-				eventHandlers->eraseLast = false;
+			if(i->specialFlag()) {
+				i = eventHandlers.erase_after(prev);
 			}
 			else {
 				++i;
@@ -282,20 +227,17 @@ public:
 		}
 	}
 	bool removeExampleHandler (Handle handlerPtr) {
- 	  if(eventHandlers) { 			
- 			auto prev = eventHandlers->before_begin(); 
-			for(auto i = eventHandlers->begin();i != eventHandlers->end();++i,++prev) { 
-				if(*i == handlerPtr) {
-					eventHandlers->erase_after(prev);
-					return true;
-				}
+		auto prev = eventHandlers.before_begin(); 
+		for(auto i = eventHandlers.begin();i != eventHandlers.end();++i,++prev) { 
+			if(*i == handlerPtr) {
+				eventHandlers.erase_after(prev);
+				return true;
 			}
- 		}
+		}
  		return false;
 	}
 	void removeAllExampleHandlers () {
-		if(eventHandlers)
-			eventHandlers->clear();
+		eventHandlers.clear();
 	}
 }; //_//
 
@@ -349,7 +291,7 @@ public:
 		std::shared_ptr<std::atomic<bool>> finished = std::make_shared<std::atomic<bool>>();
 		std::unique_lock<std::mutex> lk(m);
 		Handle ptr = onceExample(
-			EE::wrapLambdaWithCallback2(handler, [=]() {
+			EE::wrapLambdaWithCallback(handler, [=]() {
 				finished->store(true);
 				this->condition.notify_all();
 		}));
@@ -427,17 +369,15 @@ public:
 
 #endif // EVENTEMITTER_DISABLE_THREADING
 
-#include <map>
-
 #define EventDispatcherBase ExampleEventEmitter //#//
 
  #define __EVENTEMITTER_DISPATCHER(frontname, name) //^//
 template<template<typename...> class EventDispatcherBase, typename T, typename... Rest>
 class ExampleEventDispatcherTpl : public EventDispatcherBase<T, Rest...> {
- 	typedef typename EventDispatcherBase<Rest...>::HandlerPtr HandlerPtr;
-	typedef typename EventDispatcherBase<Rest...>::Handler Handler;
-	typedef typename EventDispatcherBase<Rest...>::Handle Handle;
-	std::multimap<T, Handler> map;
+ 	using HandlerPtr =  typename EventDispatcherBase<Rest...>::HandlerPtr;
+	using Handler = typename EventDispatcherBase<Rest...>::Handler;
+	using Handle = typename EventDispatcherBase<Rest...>::Handle;
+	std::multimap<T, HandlerPtr> map;
 	bool eraseLast = false;
 public:
 	ExampleEventDispatcherTpl() {
@@ -467,18 +407,18 @@ public:
 	}
 	
  	Handle onExample (T eventName, Handler handler) {
-		return EE::getAddress(map.insert(std::pair<T, Handler>(eventName,  handler))->second);
+		return map.insert(std::pair<T, Handler>(eventName,  handler))->second;
  	}
  	Handle onceExample (T eventName, Handler handler) {
-		return EE::getAddress(map.insert(std::pair<T, Handler>(eventName,  
-			EE::wrapLambdaWithCallback2(handler, [&] {
+		return map.insert(std::pair<T, Handler>(eventName,  
+			EE::wrapLambdaWithCallback(handler, [&] {
 				eraseLast = true;
-			})))->second);
+			})))->second;
  	}
  	bool removeExampleHandler (T eventName, Handle handler) {
 		auto ret = map.equal_range(eventName);
 		for(auto it = ret.first;it != ret.second;++it) {
-			if(EE::getAddress(it->second) == handler) {
+			if(it->second == handler) {
 				it = map.erase(it);
 				return true;
 			}
