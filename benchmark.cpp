@@ -2,11 +2,11 @@
 
 #include <cassert>
 
-DefineEventEmitter(Test)
+DefineDeferredEventEmitter(Test)
 
 int main(void)
 {
-	TestEventEmitter provider;
+	TestDeferredEventEmitter provider;
 	
 	int counter[10] = {0,};
 	auto setupHandlers = [&] {
@@ -19,8 +19,10 @@ int main(void)
 	setupHandlers();
 	for(int i =0; i < 100000;++i) {
 		provider.triggerTest();
+		provider.runAllDeferred();
 		setupHandlers();
 	}
+	provider.runAllDeferred();
 	for(int i = 0;i < 10;++i) {
 		assert(counter[i] == 100000);
 	}

@@ -4,13 +4,13 @@ EventEmitter.hpp: EventEmitter.sane.hpp compile.pl Makefile
 	./compile.pl < EventEmitter.sane.hpp > EventEmitter.hpp
 
 test: test.cpp EventEmitter.hpp EventEmitter.sane.hpp
-	$(CXX) test.cpp -std=c++11 -o test -g -lpthread $(DEFS)
+	$(CXX) test.cpp -std=c++14 -o test -g -lpthread $(DEFS)
 
 benchmark: benchmark.cpp EventEmitter.hpp
-	$(CXX) benchmark.cpp -std=c++11 -o benchmark -g -lpthread -O3 -save-temps $(DEFS)
+	$(CXX) benchmark.cpp -std=c++14 -o benchmark -g -lpthread -O3 -save-temps $(DEFS)
 
 example: example.cpp EventEmitter.hpp
-	$(CXX) example.cpp -std=c++11 -o example
+	$(CXX) example.cpp -std=c++14 -o example
 
 clean:
 	rm test EventEmitter.hpp

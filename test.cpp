@@ -78,10 +78,8 @@ int main()
 		test.triggerExample(1, 3, "A");
 		test.triggerExample(5, 7, "B");
 		test.removeExampleHandler(handler);
-		test.triggerExample(11, 13, "B");
 		
 		assert(sum == 16, "removeExampleHandler: third trigger should not run");
-		
 		handler = test.onceExample(lambda);
 		test.removeExampleHandler(handler);
 		test.triggerExample(11, 13, "B");
@@ -277,4 +275,3 @@ int main()
 	
 	return 0;
 }
-
