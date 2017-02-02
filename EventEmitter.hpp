@@ -10,7 +10,6 @@
 #include <functional>
 #include <forward_list>
 #include <map>
-#include <deque>
 #include <cstring>
 
 #ifndef EVENTEMITTER_DISABLE_THREADING
@@ -41,12 +40,15 @@ namespace EE {
 	protected: 
 		typedef std::function<void ()> DeferredHandler;
 		std::forward_list<DeferredHandler> removeHandlers;
-		std::deque<DeferredHandler> deferredQueue;
+		std::forward_list<DeferredHandler> deferredQueue;
 		__EVENTEMITTER_MUTEX_DECLARE(mutex);
 	protected:
 		void runDeferred(DeferredHandler f) {
 			__EVENTEMITTER_LOCK_GUARD(mutex);
-			deferredQueue.emplace_back(std::move(f));
+			auto it = deferredQueue.cbegin();
+			auto prevIt = deferredQueue.cbefore_begin();
+			for(; it != deferredQueue.cend(); prevIt = it, ++it);
+			deferredQueue.emplace_after(prevIt, std::move(f));
 		}
 	public:
 		void removeAllHandlers() {
@@ -60,13 +62,15 @@ namespace EE {
 		}
 		bool runDeferred() {
 			__EVENTEMITTER_LOCK_GUARD(mutex);
-			if(deferredQueue.size()) {
-				((deferredQueue.front()))();
-				deferredQueue.pop_front();
+			if(deferredQueue.empty()) {
+				return false;
 			}
-			return !deferredQueue.empty();
+			(deferredQueue.front())();
+			deferredQueue.pop_front();
+			return true;
 		}
 		void runAllDeferred() {
+			// TODO: make optimized runAll
 			while(runDeferred());
 		}
 	};
