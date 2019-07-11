@@ -1,477 +1,327 @@
-#ifndef __EVENTEMITTER_HPP
-#define __EVENTEMITTER_HPP
+#pragma once
 
-#ifdef __EVENTEMITTER_TESTING
-#undef __EVENTEMITTER_PROVIDER
-#undef __EVENTEMITTER_PROVIDER_THREADED
-#undef __EVENTEMITTER_PROVIDER_DEFERRED
-#endif
-
-#include <functional>
 #include <forward_list>
-#include <map>
-#include <cstring>
+#include <functional>
+#include <memory>
+#include <vector>
 
-#ifndef EVENTEMITTER_DISABLE_THREADING
-#include <condition_variable>
-#include <future>
-#include <mutex>
+namespace EE {
+// source:
+// stackoverflow.com/questions/15501301/binding-function-arguments-in-c11
+template <typename T> struct forward_as_ref_type { typedef T &&type; };
+template <typename T> struct forward_as_ref_type<T &> {
+  typedef std::reference_wrapper<T> type;
+};
+template <typename T>
+typename forward_as_ref_type<T>::type
+forward_as_ref(typename std::remove_reference<T>::type &t) {
+  return static_cast<typename forward_as_ref_type<T>::type>(t);
+}
+template <typename T>
+T &&forward_as_ref(typename std::remove_reference<T>::type &&t) {
+  return t;
+}
 
-#define __EVENTEMITTER_MUTEX_DECLARE(mutex) std::mutex mutex;
-#define __EVENTEMITTER_LOCK_GUARD(mutex) std::lock_guard<std::mutex> guard(mutex);
-#else
-#define __EVENTEMITTER_MUTEX_DECLARE(mutex);
-#define __EVENTEMITTER_LOCK_GUARD(mutex);
-#endif
+namespace detail {
+// helper
+template <class T> struct derive : T {
+  template <class... A> derive(A... a) : T(a...) {}
+};
 
-#if defined(__GNUC__)
-#define __EVENTEMITTER_GCC_WORKAROUND this->
-#else
-#define __EVENTEMITTER_GCC_WORKAROUND
-#endif
+template <class X, class... T> struct deriver;
 
-#define __EVENTEMITTER_CONCAT_IMPL(x, y) x ## y
+template <class X> struct deriver<X> : derive<X> {
+  template <class... A> deriver(A... a) : derive<X>(a...) {}
+};
+
+template <class X, class... T> struct deriver : derive<X>, deriver<T...> {
+  template <class... A> deriver(A... a) : derive<X>(a...), deriver<T...>() {}
+};
+} // namespace detail
+
+struct default_ee_engine {
+  template <typename... T> using function = typename std::function<T...>;
+
+  template <typename T> class container {
+  public:
+    using base = std::forward_list<T>;
+    using handle = intptr_t;
+
+    struct node {
+      std::unique_ptr<node> next;
+      T val;
+      node(T &&_val, node *_next) : next(_next), val(std::move(_val)) {}
+    };
+
+    std::unique_ptr<node> next;
+
+    struct iterator {
+      node *current;
+      node *prev;
+      bool removeFlag;
+
+      bool operator!=(iterator rhs) { return current != rhs.current; }
+      T &operator*() { return current->val; }
+      void operator++() {
+        auto nextPtr = current->next.get();
+        if (removeFlag || (current != (node *)this && !current->val)) {
+
+          current->next.release();
+          prev->next.reset(nextPtr);
+          current = nextPtr;
+        } else {
+          prev = current;
+          current = nextPtr;
+        }
+        removeFlag = clearOnceFlag();
+      }
+
+      bool hasOnceFlag() {
+        return current ? (**(intptr_t **)(&current) & 0x1) : false;
+      }
+      bool clearOnceFlag() {
+        if (!hasOnceFlag()) {
+          return false;
+        }
+        **(intptr_t **)(&current) &= ~0x1;
+        return true;
+      }
+
+      void setOnceFlag() {
+        if (!current) {
+          return;
+        }
+        **(intptr_t **)(&current) |= 0x1;
+      }
+    };
+
+    iterator begin() {
+      iterator i{next.get(), (node *)this};
+      i.removeFlag = i.clearOnceFlag();
+      return i;
+    }
+    iterator end() { return {nullptr}; }
+
+  public:
+    ~container() {
+      for (auto i : *this) {
+      }
+    }
+
+    bool empty() { return !next; }
+
+    void erase(handle h) {
+      auto n = (node *)h;
+      n->val = T();
+    }
+
+    handle emplace(T &&elem, bool removeFlag = false) {
+      auto oldNext = next.release();
+      next = std::make_unique<node>(std::move(elem), oldNext);
+      auto ptr = (handle)this->next.get();
+      if (removeFlag) {
+        this->begin().setOnceFlag();
+      }
+      return ptr;
+    }
+  };
+};
+
+template <typename ee_engine> struct abstract_ee {
+
+  template <typename... T>
+  using function = typename ee_engine::template function<T...>;
+
+  template <typename T>
+  using container = typename ee_engine::template container<T>;
+
+  class deferred_base {
+  protected:
+    using deferred_handler = function<void()>;
+    std::vector<deferred_handler> deferredQueue;
+
+  protected:
+    void runDeferred(deferred_handler &&f) {
+      if (deferredQueue.empty()) {
+        deferredQueue.reserve(4);
+      }
+      deferredQueue.emplace_back(std::move(f));
+    }
+
+  public:
+    void clearDeferred() { deferredQueue.clear(); }
+    bool runDeferred(int &idx) {
+      if (idx < static_cast<int>(deferredQueue.size())) {
+        auto &f = deferredQueue[idx];
+        if (f) {
+          f();
+          f = nullptr;
+        }
+        idx++;
+        return true;
+      }
+      return false;
+    }
+    void runAllDeferred() {
+      int idx = 0;
+      while (runDeferred(idx))
+        ;
+      deferredQueue.clear();
+    }
+  };
+
+  template <typename... Args> class event {
+  public:
+    using event_handler = function<void(Args...)>;
+
+  private:
+    using Container = container<event_handler>;
+
+  public:
+    using registered_handle = typename Container::handle;
+    using Handle = typename Container::handle;
+
+  private:
+    Container eventHandlers;
+
+  public:
+    registered_handle on(event_handler handler) {
+      return eventHandlers.emplace(std::move(handler));
+    };
+
+    registered_handle once(event_handler handler) {
+      return eventHandlers.emplace(std::move(handler), true);
+    }
+
+    void trigger(Args... fargs) {
+      for (auto &f : eventHandlers) {
+        if (f) {
+          f(fargs...);
+        }
+      }
+    };
+
+    bool hasHandlers() { return !eventHandlers.empty(); }
+
+    int countHandlers() {
+      int count = 0;
+      for (auto &i : eventHandlers)
+        count++;
+      return count;
+    }
+
+    bool removeHandler(registered_handle handlerPtr) {
+      eventHandlers.erase(handlerPtr);
+      return !eventHandlers.empty();
+    }
+
+    int removeAllHandlers() {
+      int count = 0;
+      // for(;!eventHandlers.empty() &&
+      // removeHandler(eventHandlers.before_begin());++count);
+      return count;
+    }
+
+    ~event() { removeAllHandlers(); }
+  };
+
+  template <typename... Args>
+  class deferred_event : public event<Args...>, public virtual deferred_base {
+  public:
+    using event_base = event<Args...>;
+    deferred_event() {}
+    inline void emit(Args &&... fargs) { trigger(fargs...); }
+
+    template <typename... FArgs> void trigger(FArgs &&... fargs) {
+      this->runDeferred([=]() { this->event_base::trigger(fargs...); });
+    }
+  };
+
+  template <class... Bases>
+  class event_emitter : public detail::deriver<Bases...> {
+    struct sum_helper {
+      template <typename T> static int sum(T n) { return n; }
+
+      template <typename T, typename... Args>
+      static int sum(T n, Args... rest) {
+        return n + sum(rest...);
+      }
+    };
+
+    template <class... A> int callRemovalForBases() {
+      return [](auto... param) {
+        return sum_helper::sum(param...);
+      }((A::removeAllHandlers())...);
+    }
+
+  public:
+    template <class... Args>
+    event_emitter(Args... args) : detail::deriver<Bases...>(args...) {}
+
+    template <class T, class... Args>
+    typename T::registered_handle on(Args &&... args) {
+      return T::on(args...);
+    }
+
+    template <class T, class... Args> void trigger(Args &&... args) {
+      T::trigger(args...);
+    }
+
+    virtual int removeAllHandlers() { return callRemovalForBases<Bases...>(); }
+  };
+};
+
+using default_ee = abstract_ee<default_ee_engine>;
+
+template <class... Bases>
+using EventEmitter = default_ee::event_emitter<Bases...>;
+
+template <class... Bases> using Event = default_ee::event<Bases...>;
+
+template <class... Bases>
+using DeferredEvent = default_ee::deferred_event<Bases...>;
+
+using DeferredBase = default_ee::deferred_base;
+} // namespace EE
+
+#define __EVENTEMITTER_CONCAT_IMPL(x, y) x##y
 #define __EVENTEMITTER_CONCAT(x, y) __EVENTEMITTER_CONCAT_IMPL(x, y)
 
-#ifndef __EVENTEMITTER_NONMACRO_DEFS
-#define __EVENTEMITTER_NONMACRO_DEFS
-namespace EE {
-	class DeferredBase {
-	protected: 
-		typedef std::function<void ()> DeferredHandler;
-		std::forward_list<DeferredHandler> removeHandlers;
-		std::forward_list<DeferredHandler> deferredQueue;
-		__EVENTEMITTER_MUTEX_DECLARE(mutex);
-	protected:
-		void runDeferred(DeferredHandler f) {
-			__EVENTEMITTER_LOCK_GUARD(mutex);
-			auto it = deferredQueue.cbegin();
-			auto prevIt = deferredQueue.cbefore_begin();
-			for(; it != deferredQueue.cend(); prevIt = it, ++it);
-			deferredQueue.emplace_after(prevIt, std::move(f));
-		}
-	public:
-		void removeAllHandlers() {
-			for(auto& handler : removeHandlers) {
-				handler();
-			}
-		}
-		void clearDeferred() {
-			__EVENTEMITTER_LOCK_GUARD(mutex);
-			deferredQueue.clear();
-		}
-		bool runDeferred() {
-			__EVENTEMITTER_LOCK_GUARD(mutex);
-			if(deferredQueue.empty()) {
-				return false;
-			}
-			(deferredQueue.front())();
-			deferredQueue.pop_front();
-			return true;
-		}
-		void runAllDeferred() {
-			// TODO: make optimized runAll
-			while(runDeferred());
-		}
-	};
-	
-	// reference_wrapper needs to be used instead of std::reference_wrapper
-	// this is because of VS2013 (RC) bug
-	template<class T> class reference_wrapper
-	{
-	public:
-		typedef T type;
-		explicit reference_wrapper(T& t): t_(&t) {}
-		operator T& () const { return *t_; }
-		T& get() const { return *t_; }
-		T* get_pointer() const { return t_; }
-private:
-    T* t_;
-};
-	
+#define __DefineEventEmitter(class_name, base_class, name, ...)                \
+  struct class_name : EE::base_class<__VA_ARGS__> {                            \
+    using Base = EE::base_class<__VA_ARGS__>;                                  \
+    template <typename... Args>                                                \
+    registered_handle __EVENTEMITTER_CONCAT(on, name)(Args && ... args) {      \
+      return Base::on(args...);                                                \
+    }                                                                          \
+    template <typename... Args>                                                \
+    registered_handle __EVENTEMITTER_CONCAT(once, name)(Args && ... args) {    \
+      return Base::once(args...);                                              \
+    }                                                                          \
+    template <typename... Args>                                                \
+    void __EVENTEMITTER_CONCAT(trigger, name)(Args && ... args) {              \
+      Base::trigger(args...);                                                  \
+    }                                                                          \
+    template <typename... Args>                                                \
+    int __EVENTEMITTER_CONCAT(__EVENTEMITTER_CONCAT(removeAll, name),          \
+                              Handlers)(Args && ... args) {                    \
+      return Base::removeAllHandlers(args...);                                 \
+    }                                                                          \
+    template <typename... Args>                                                \
+    void __EVENTEMITTER_CONCAT(__EVENTEMITTER_CONCAT(remove, name),            \
+                               Handler)(Args && ... args) {                    \
+      Base::removeHandler(args...);                                            \
+    }                                                                          \
+  };
 
-// source: stackoverflow.com/questions/15501301/binding-function-arguments-in-c11
-template<typename T> struct forward_as_ref_type {
- typedef T &&type;
-};
-template<typename T> struct forward_as_ref_type<T &> {
-	typedef reference_wrapper<T> type;
-};
-template<typename T> typename forward_as_ref_type<T>::type forward_as_ref(
- typename std::remove_reference<T>::type &t) {
-    return static_cast<typename forward_as_ref_type<T>::type>(t);
- }
- template<typename T> T &&forward_as_ref(
- typename std::remove_reference<T>::type &&t) {
-    return t;
- }
+#define DefineEventEmitter(name, ...)                                          \
+  __DefineEventEmitter(__EVENTEMITTER_CONCAT(name, EventEmitter), Event, name, \
+                       __VA_ARGS__)
+#define DefineDeferredEventEmitter(name, ...)                                  \
+  __DefineEventEmitter(__EVENTEMITTER_CONCAT(name, DeferredEventEmitter),      \
+                       DeferredEvent, name, __VA_ARGS__)
 
-template<typename... Args>	
-inline decltype(auto) wrapLambdaWithCallback(const std::function<void(Args...)>& f, std::function<void()>&& afterCb) {
-	return [=,afterCb=std::move(afterCb)](Args&&... args) {
-		f(args...);
-		afterCb();
-	};
-}
-
-template<typename... Args>	
-inline decltype(auto) wrapLambdaWithCallback(std::function<void(Args...)>&& f, std::function<void()>&& afterCb) {
-	return [f=std::move(f),afterCb=std::move(afterCb)](Args&&... args) {
-		f(args...);
-		afterCb();
-	};
-}
-
-#ifndef EVENTEMITTER_DISABLE_THREADING
-	
-	// TODO: allow callback for setting if async has completed
-	template<typename... Args>
-	class LambdaAsyncWrapper
-	{
-		std::function<void(Args...)> m_f;		
-	public:
-		LambdaAsyncWrapper(const std::function<void(Args...)>& f) : m_f(f) {}
-		void operator()(Args... fargs) const { 
-			std::async(std::launch::async, m_f, fargs...);
-		}
-	};
-	template<typename... Args>
-	LambdaAsyncWrapper<Args...> wrapLambdaInAsync(const std::function<void(Args...)>& f) {
-		return LambdaAsyncWrapper<Args...>(f);
-	};
-	
-	template<typename... Args>
-	class LambdaPromiseWrapper
-	{
-		std::shared_ptr<std::promise<std::tuple<Args...>>> m_promise;
-	public:
-		LambdaPromiseWrapper(std::shared_ptr<std::promise<std::tuple<Args...>>> promise) : m_promise(promise) {}
-		void operator()(Args... fargs) const { 
-			m_promise->set_value(std::tuple<Args...>(fargs...));
-		}
-	};
-	template<typename... Args>
-	LambdaPromiseWrapper<Args...> getLambdaForFuture(std::shared_ptr<std::promise<std::tuple<Args...>>> promise) {
-		return LambdaPromiseWrapper<Args...>(promise);
-	};
-
-#endif // EVENTEMITTER_DISABLE_THREADING
-	
-}
-#endif // __EVENTEMITTER_NONMACRO_DEFS
-
-
-#ifndef __EVENTEMITTER_CONTAINER
-#define __EVENTEMITTER_CONTAINER std::forward_list<HandlerPtr>
-#endif
-
-using handle_id_type = uint32_t;
-static handle_id_type __handle_counter;
-
-#define __EVENTEMITTER_PROVIDER(frontname, name)  \
-template<typename... Rest> \
-class __EVENTEMITTER_CONCAT(frontname,EventEmitterTpl) { \
-public: \
-	typedef std::function<void(Rest...)> Handler; \
-	using Handle = handle_id_type; \
-	using HandlerTuple = std::tuple<Handle, Handler>; \
-	struct HandlerPtr : public HandlerTuple { \
-		HandlerPtr(Handler handler, bool _specialFlag = false) : HandlerTuple((__handle_counter++) | _specialFlag << 31 , std::move(handler)) { \
-			if(__handle_counter & 0x80000000) { \
-				__handle_counter = 0; \
-			} \
-		} \
-		bool specialFlag() { \
-			return std::get<0>(*this) & 0x80000000; \
-		} \
-		bool operator==(Handle other) { \
-			return std::get<0>(*this) == other; \
-		} \
-		template<typename... Args> inline decltype(auto) operator() (Args&&... fargs) { \
-			return std::get<1>(*this)(fargs...); \
-		} \
-		operator Handle() const { return std::get<0>(*this); } \
-	}; \
- \
-private: \
-	using EventHandlersSet = __EVENTEMITTER_CONTAINER; \
-	EventHandlersSet eventHandlers; \
-public: \
-	Handle __EVENTEMITTER_CONCAT(on,name) (Handler handler) { \
-		eventHandlers.emplace_front(std::move(handler)); \
-		return eventHandlers.front(); \
-	} \
-	Handle __EVENTEMITTER_CONCAT(once,name) (Handler handler) { \
-		eventHandlers.emplace_front(std::move(handler), true); \
-		return eventHandlers.front(); \
-	} \
-	bool __EVENTEMITTER_CONCAT(has,__EVENTEMITTER_CONCAT(name, Handlers))() { \
-		return !eventHandlers.empty(); \
-	} \
-	int __EVENTEMITTER_CONCAT(count,__EVENTEMITTER_CONCAT(name, Handlers))() { \
-		int count = 0; \
-		for(auto& i:eventHandlers) count++; \
-		return count; \
-	} \
-	template<typename... Args> inline void __EVENTEMITTER_CONCAT(emit,name) (Args&&... fargs) { \
-		__EVENTEMITTER_CONCAT(trigger,name)(fargs...); \
-	} \
-	template<typename... Args> inline void __EVENTEMITTER_CONCAT(trigger,name) (Args&&... fargs) { \
-		auto prev = eventHandlers.before_begin();  \
-	  for(auto i = eventHandlers.begin();i != eventHandlers.end();) { \
-			 \
-			(*i)(fargs...); \
-			if(i->specialFlag()) { \
-				i = eventHandlers.erase_after(prev); \
-			} \
-			else { \
-				++i; \
-				++prev; \
-			} \
-		} \
-	} \
-	bool __EVENTEMITTER_CONCAT(remove,__EVENTEMITTER_CONCAT(name, Handler)) (Handle handlerPtr) { \
-		auto prev = eventHandlers.before_begin();  \
-		for(auto i = eventHandlers.begin();i != eventHandlers.end();++i,++prev) {  \
-			if(*i == handlerPtr) { \
-				eventHandlers.erase_after(prev); \
-				return true; \
-			} \
-		} \
- 		return false; \
-	} \
-	void __EVENTEMITTER_CONCAT(removeAll,__EVENTEMITTER_CONCAT(name, Handlers)) () { \
-		eventHandlers.clear(); \
-	} \
-};  
-
-#define __EVENTEMITTER_PROVIDER_DEFERRED(frontname, name)  \
-template<typename... Rest> \
-class __EVENTEMITTER_CONCAT(frontname,DeferredEventEmitterTpl) : public __EVENTEMITTER_CONCAT(frontname,EventEmitterTpl)<Rest...>, public virtual EE::DeferredBase { \
-public: \
-	__EVENTEMITTER_CONCAT(frontname,DeferredEventEmitterTpl)() { \
-		DeferredBase::removeHandlers.emplace_front([=] { \
-			this->__EVENTEMITTER_CONCAT(removeAll,__EVENTEMITTER_CONCAT(name, Handlers))(); \
-		}); \
-	} \
- \
-	template<typename... Args> inline void __EVENTEMITTER_CONCAT(emit,name) (Args&&... fargs) { \
-		__EVENTEMITTER_CONCAT(trigger,name)(fargs...); \
-	} \
-	template<typename... Args> void __EVENTEMITTER_CONCAT(trigger,__EVENTEMITTER_CONCAT(name, ByRef)) (Args&&... fargs) { \
-		runDeferred( \
-			std::bind([=](Args... as) { \
-			__EVENTEMITTER_GCC_WORKAROUND __EVENTEMITTER_CONCAT(frontname,EventEmitterTpl)<Rest...>::__EVENTEMITTER_CONCAT(trigger,name)(as...); \
-			}, EE::forward_as_ref<Args>(fargs)...)); \
-	} \
-	template<typename... Args> void __EVENTEMITTER_CONCAT(trigger,name) (Args... fargs) { \
-		runDeferred( \
-			std::bind([=](Args... as) { \
-			__EVENTEMITTER_GCC_WORKAROUND __EVENTEMITTER_CONCAT(frontname,EventEmitterTpl)<Rest...>::__EVENTEMITTER_CONCAT(trigger,name)(as...); \
-			}, fargs...)); \
-	}	 \
-};  
-
-#ifndef EVENTEMITTER_DISABLE_THREADING
-
-#define __EVENTEMITTER_PROVIDER_THREADED(frontname, name)  \
-template<typename... Rest> \
-class __EVENTEMITTER_CONCAT(frontname,ThreadedEventEmitterTpl) : public __EVENTEMITTER_CONCAT(frontname,EventEmitterTpl)<Rest...>, public virtual EE::DeferredBase {  \
-  std::condition_variable condition; \
-	std::mutex m; \
- \
-	typedef typename __EVENTEMITTER_CONCAT(frontname,EventEmitterTpl)<Rest...>::Handler Handler; \
-	typedef typename __EVENTEMITTER_CONCAT(frontname,EventEmitterTpl)<Rest...>::HandlerPtr HandlerPtr; \
-	typedef typename __EVENTEMITTER_CONCAT(frontname,EventEmitterTpl)<Rest...>::Handle Handle; \
-	 \
-public: \
-	__EVENTEMITTER_CONCAT(frontname,ThreadedEventEmitterTpl)() { \
-	}	 \
-	bool __EVENTEMITTER_CONCAT(wait,name) (std::chrono::milliseconds duration = std::chrono::milliseconds::max()) { \
-		__EVENTEMITTER_CONCAT(wait,name)([=](Rest...) { \
-		}, duration); \
- 	} \
- 	bool __EVENTEMITTER_CONCAT(wait,name) (Handler handler, std::chrono::milliseconds duration = std::chrono::milliseconds::max()) { \
-		std::shared_ptr<std::atomic<bool>> finished = std::make_shared<std::atomic<bool>>(); \
-		std::unique_lock<std::mutex> lk(m); \
-		Handle ptr = __EVENTEMITTER_CONCAT(once,name)( \
-			EE::wrapLambdaWithCallback(handler, [=]() { \
-				finished->store(true); \
-				this->condition.notify_all(); \
-		})); \
-		 \
-		if(duration == std::chrono::milliseconds::max()) { \
-			condition.wait(lk); \
-		}  \
-		else { \
-			condition.wait_for(lk, duration, [=]() { \
-				return finished->load(); \
-			}); \
-		} \
-		bool gotFinished = finished->load(); \
-		if(!gotFinished) { \
-			__EVENTEMITTER_CONCAT(frontname,EventEmitterTpl)<Rest...>::__EVENTEMITTER_CONCAT(remove,__EVENTEMITTER_CONCAT(name, Handler))(ptr); \
-		} \
-		return gotFinished; \
- 	} \
-	void __EVENTEMITTER_CONCAT(asyncWait,name)(Handler handler, std::chrono::milliseconds duration, const std::function<void()>& asyncTimeout) { \
-		auto async = std::async(std::launch::async, [=]() { \
-			if(!__EVENTEMITTER_CONCAT(wait,name)(handler, duration)) \
-				asyncTimeout(); \
-		}); \
-	} \
-	 \
-	Handle __EVENTEMITTER_CONCAT(on,name) (Handler handler) { \
-		__EVENTEMITTER_LOCK_GUARD(mutex); \
-		return __EVENTEMITTER_CONCAT(frontname,EventEmitterTpl)<Rest...>::__EVENTEMITTER_CONCAT(on,name)(handler); \
-	} \
-	Handle __EVENTEMITTER_CONCAT(once,name) (Handler&& handler) { \
-		__EVENTEMITTER_LOCK_GUARD(mutex); \
-		return __EVENTEMITTER_CONCAT(frontname,EventEmitterTpl)<Rest...>::__EVENTEMITTER_CONCAT(once,name)(handler); \
-	} \
-	Handle __EVENTEMITTER_CONCAT(asyncOn,name) (Handler handler) { \
-		return __EVENTEMITTER_CONCAT(on,name)(EE::wrapLambdaInAsync(handler)); \
-	} \
-	Handle __EVENTEMITTER_CONCAT(asyncOnce,name) (Handler handler) { \
-		return __EVENTEMITTER_CONCAT(once,name)(EE::wrapLambdaInAsync(handler)); \
-	} \
-	auto __EVENTEMITTER_CONCAT(futureOnce,name)() -> decltype(std::future<std::tuple<Rest...>>()) { \
-		typedef std::tuple<Rest...> TupleEventType; \
-		auto promise = std::make_shared<std::promise<TupleEventType>>(); \
-		auto future = promise->get_future(); \
-		condition.notify_all(); \
-		__EVENTEMITTER_CONCAT(once,name)(EE::getLambdaForFuture(promise)); \
-		return future; \
-	} \
-	template<typename... Args> inline void __EVENTEMITTER_CONCAT(emit,name) (Args&&... fargs) { \
-		__EVENTEMITTER_CONCAT(trigger,name)(fargs...); \
-	} \
-	template<typename... Args> void __EVENTEMITTER_CONCAT(trigger,name) (Args&&... fargs) {  \
-		__EVENTEMITTER_LOCK_GUARD(mutex); \
-		__EVENTEMITTER_CONCAT(frontname,EventEmitterTpl)<Rest...>::__EVENTEMITTER_CONCAT(trigger,name)(fargs...); \
-		condition.notify_all(); \
-	} \
-	template<typename... Args> void __EVENTEMITTER_CONCAT(defer,__EVENTEMITTER_CONCAT(name, ByRef)) (Args&&... fargs) {  \
-		runDeferred( \
- 			std::bind([=](Args... as) { \
- 			__EVENTEMITTER_GCC_WORKAROUND __EVENTEMITTER_CONCAT(frontname,EventEmitterTpl)<Rest...>::__EVENTEMITTER_CONCAT(trigger,name)(as...); \
- 			}, \
-			EE::forward_as_ref<Args>(fargs)...			 \
-			  \
-			)); \
-	} \
-	template<typename... Args> void __EVENTEMITTER_CONCAT(defer,name) (Args... fargs) {  \
-		runDeferred( \
- 			std::bind([=](Args... as) { \
- 			__EVENTEMITTER_GCC_WORKAROUND __EVENTEMITTER_CONCAT(frontname,EventEmitterTpl)<Rest...>::__EVENTEMITTER_CONCAT(trigger,name)(as...); \
- 			}, \
-			fargs...			 \
-			  \
-			)); \
-	} \
-};  
-
-#endif // EVENTEMITTER_DISABLE_THREADING
-
-
-
- #define __EVENTEMITTER_DISPATCHER(frontname, name)  \
-template<template<typename...> class EventDispatcherBase, typename T, typename... Rest> \
-class __EVENTEMITTER_CONCAT(frontname,EventDispatcherTpl) : public EventDispatcherBase<T, Rest...> { \
- 	using HandlerPtr =  typename EventDispatcherBase<Rest...>::HandlerPtr; \
-	using Handler = typename EventDispatcherBase<Rest...>::Handler; \
-	using Handle = typename EventDispatcherBase<Rest...>::Handle; \
-	std::multimap<T, HandlerPtr> map; \
-	bool eraseLast = false; \
-public: \
-	__EVENTEMITTER_CONCAT(frontname,EventDispatcherTpl)() { \
-		__EVENTEMITTER_CONCAT(frontname,EventEmitter)<T, Rest...>::__EVENTEMITTER_CONCAT(on,name)([&](T eventName, Rest... fargs) { \
- 			auto ret = map.equal_range(eventName); \
- 			for(auto it = ret.first;it != ret.second;) { \
- 				(it->second)(fargs...); \
-				if(eraseLast) { \
-					it = map.erase(it); \
-					eraseLast = false; \
-				} \
-				else { \
-					++it; \
-				} \
- 			} \
-		}); \
-	} \
-	bool __EVENTEMITTER_CONCAT(has,__EVENTEMITTER_CONCAT(name, Handlers))(T eventName) { \
-		return map.find(eventName) != map.end(); \
-	} \
-	int __EVENTEMITTER_CONCAT(count,__EVENTEMITTER_CONCAT(name, Handlers))(T eventName) { \
-		int count = 0; \
-		auto ret = map.equal_range(eventName); \
-		for(auto it = ret.first;it != ret.second;++it) \
-			count++; \
-		return count; \
-	} \
-	 \
- 	Handle __EVENTEMITTER_CONCAT(on,name) (T eventName, Handler handler) { \
-		return map.insert(std::pair<T, Handler>(eventName,  handler))->second; \
- 	} \
- 	Handle __EVENTEMITTER_CONCAT(once,name) (T eventName, Handler handler) { \
-		return map.insert(std::pair<T, Handler>(eventName,   \
-			EE::wrapLambdaWithCallback(handler, [&] { \
-				eraseLast = true; \
-			})))->second; \
- 	} \
- 	bool __EVENTEMITTER_CONCAT(remove,__EVENTEMITTER_CONCAT(name, Handler)) (T eventName, Handle handler) { \
-		auto ret = map.equal_range(eventName); \
-		for(auto it = ret.first;it != ret.second;++it) { \
-			if(it->second == handler) { \
-				it = map.erase(it); \
-				return true; \
-			} \
-		} \
-		return false; \
-	} \
-	void __EVENTEMITTER_CONCAT(removeAll,__EVENTEMITTER_CONCAT(name, Handlers)) (T eventName) { \
-		auto ret = map.equal_range(eventName); \
-		for(auto it = ret.first;it != ret.second;) {		 \
-			it = map.erase(it); \
-		} \
-	} \
- };  
-
-
-
-
-#define DefineEventEmitterAs(name, className, ...) \
-__EVENTEMITTER_PROVIDER(name, name) \
-typedef __EVENTEMITTER_CONCAT(name, EventEmitterTpl)<__VA_ARGS__> className;
-
-#define DefineEventEmitter(name, ...) DefineEventEmitterAs(name, __EVENTEMITTER_CONCAT(name, EventEmitter), __VA_ARGS__);
-
-#define DefineDeferredEventEmitterAs(name, className, ...) \
-__EVENTEMITTER_PROVIDER(name,name) \
-__EVENTEMITTER_PROVIDER_DEFERRED(name,name) \
-typedef __EVENTEMITTER_CONCAT(name, DeferredEventEmitterTpl)<__VA_ARGS__> className;
-
-#define DefineDeferredEventEmitter(name, ...) DefineDeferredEventEmitterAs(name, __EVENTEMITTER_CONCAT(name, DeferredEventEmitter), __VA_ARGS__)
-
-#define DefineThreadedEventEmitterAs(name, className, ...) \
-__EVENTEMITTER_PROVIDER(name,name) \
-__EVENTEMITTER_PROVIDER_THREADED(name,name) \
-typedef __EVENTEMITTER_CONCAT(name, ThreadedEventEmitterTpl)<__VA_ARGS__> className;
-
-#define DefineThreadedEventEmitter(name, ...) __EVENTEMITTER_CONCAT(name, ThreadedEventEmitter), __VA_ARGS__)
-
-__EVENTEMITTER_PROVIDER(,)
-template<typename... Rest> class EventEmitter : public EventEmitterTpl<Rest...> {};
-
-__EVENTEMITTER_PROVIDER_DEFERRED(,)
-
-template<typename... Rest> class DeferredEventEmitter : public DeferredEventEmitterTpl<Rest...> {};
-
-#ifndef EVENTEMITTER_DISABLE_THREADING
-__EVENTEMITTER_PROVIDER_THREADED(,)
-#endif
-
-
-
-
-#endif // __EVENTEMITTER_HPP
+#define DefineEventEmitterAs(name, class_name, ...)                            \
+  __DefineEventEmitter(class_name, Event, name, __VA_ARGS__)
+#define DefineDeferredEventEmitterAs(name, class_name, ...)                    \
+  __DefineEventEmitter(class_name, DeferredEvent, name, __VA_ARGS__)

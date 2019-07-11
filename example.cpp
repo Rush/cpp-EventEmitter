@@ -1,32 +1,40 @@
 #include "EventEmitter.hpp"
 
-// Suggested non-macro usage
+using namespace EE;
+
+DefineEventEmitter(DoubleInt, int, int);
+DefineEventEmitter(Click);
+
+// Suggested usage as a property
 class Widget {
 public:
-	EventEmitter<int, int> doubleIntEvent;
+	DoubleIntEventEmitter doubleIntEvent;
 };
 
 
-// Suggested macro usage
-DefineEventEmitter(DoubleInt, int, int);
-class Widget2 : public DoubleIntEventEmitter {
-	
+class Widget2 : public DoubleIntEventEmitter, public ClickEventEmitter {
 };
 
 
 int main()
 {
-	Widget w;	
+	Widget w;
 	w.doubleIntEvent.on([=](int a, int b) { // slot
-		
+
 	});
 	w.doubleIntEvent.trigger(123, 213); // signal
-	
+
 
 	Widget2 w2;
-	
 	w2.onDoubleInt([=](int a, int b) {
-		
+
 	});
+
 	w2.triggerDoubleInt(213, 233);
+
+	w2.onClick([=] {
+		printf("Clicked\n");
+	});
+
+	w2.triggerClick();
 }
